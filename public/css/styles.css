@@ -1,0 +1,78 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  /* background-color: #fff;  */
+  background: linear-gradient(to right, #2193b0, #6dd5ed);
+  font-family: "Arial", sans-serif;
+}
+
+.container {
+  text-align: center;
+  color: #000; /* Default text color black */
+}
+
+.app-logo {
+  width: 200px;
+  height: 200px;
+  border-radius: 50%;
+  border: 3.5px solid black;
+  box-shadow: 0px 10px 40px rgba(0, 0, 0, 0.3);
+  object-fit: cover;
+  animation: fadeIn 1s ease-in-out;
+}
+
+.animated-text {
+  font-family: Cambria, Cochin, Georgia, Times, "Times New Roman", serif;
+  font-size: 2.5em;
+  margin-top: 20px;
+  color: black; /* Welcome message in black */
+  animation: fadeIn 1s ease-in-out;
+}
+
+.status-message {
+  font-size: 1.5em;
+  margin-top: 15px;
+  color: green; /* Server status message in green */
+  animation: fadeIn 1s ease-in-out;
+  position: relative;
+}
+
+/* The animated line under the status message */
+.line {
+  width: 100%; /* Line width is 100% of the container */
+  height: 2px;
+  background-color: green;
+  margin-top: 10px;
+  transform-origin: center; /* Line expands from the center */
+  transform: scaleX(0); /* Start with no width */
+  animation: lineAnimation 3s ease-in-out forwards;
+  position: relative;
+}
+
+/* Fade-in animation for text and image */
+@keyframes fadeIn {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+/* Line animation expands from the center to the edges */
+@keyframes lineAnimation {
+  0% {
+    transform: scaleX(0);
+  }
+  100% {
+    transform: scaleX(1);
+  }
+}
