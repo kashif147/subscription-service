@@ -1,7 +1,7 @@
 {
-  "name": "user-service",
+  "name": "subscription-service",
   "version": "1.0.0",
-  "description": "Apis for user-service",
+  "description": "Apis for subscription-service",
   "main": "app.js",
   "scripts": {
     "start": "node ./bin/subscription-service",
