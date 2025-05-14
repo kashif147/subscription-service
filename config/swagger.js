@@ -4,17 +4,17 @@ const options = {
   definition: {
     openapi: "3.0.0",
     info: {
-      title: "User Service API",
+      title: "Subscription Service API",
       version: "1.0.0",
-      description: "API documentation for User Service",
+      description: "API documentation for Subscription Service",
     },
     servers: [
       {
-        url: "http://localhost:3000",
+        url: "http://localhost:4400",
         description: "Development server",
       },
       {
-        url: "https://userserviceshell-aqf6f0b8fqgmagch.canadacentral-01.azurewebsites.net",
+        url: "https://subscriptionserviceshell-ambyf5dsa8c9dhcg.northeurope-01.azurewebsites.net/",
         description: "Production server",
       },
     ],
