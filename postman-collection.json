@@ -1,0 +1,61 @@
+{
+  "info": {
+    "name": "Subscription Service API",
+    "description": "Complete API collection for Subscription Service",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4000",
+      "type": "string"
+    },
+    {
+      "key": "authToken",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health & Info",
+      "item": [
+        {
+          "name": "Service Info",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/",
+              "host": ["{{baseUrl}}"],
+              "path": [""]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Testing",
+      "item": [
+        {
+          "name": "Test Endpoint",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/testing",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "testing"]
+            },
+            "description": "Test endpoint that requires authentication"
+          }
+        }
+      ]
+    }
+  ]
+}

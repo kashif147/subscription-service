@@ -12,12 +12,24 @@ const session = require("express-session");
 
 const loggerMiddleware = require("./middlewares/logger.mw");
 const responseMiddleware = require("./middlewares/response.mw");
+const { initEventSystem, setupConsumers } = require("./rabbitMQ");
 
 var app = express();
 
 app.use(responseMiddleware);
 
 mongooseConnection();
+
+// Initialize RabbitMQ consumers (non-blocking)
+(async () => {
+	try {
+		await initEventSystem();
+		await setupConsumers();
+		console.log("✅ RabbitMQ consumers initialized (subscription-service)");
+	} catch (err) {
+		console.error("❌ Failed to initialize RabbitMQ consumers:", err.message);
+	}
+})();
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json({ limit: "200mb" }));
