@@ -3,7 +3,6 @@ require("dotenv").config();
 
 var createError = require("http-errors");
 var express = require("express");
-const cors = require("cors");
 const swaggerUi = require("swagger-ui-express");
 const swaggerSpecs = require("./config/swagger");
 
@@ -12,6 +11,11 @@ const session = require("express-session");
 
 const loggerMiddleware = require("./middlewares/logger.mw");
 const responseMiddleware = require("./middlewares/response.mw");
+const {
+  corsMiddleware,
+  handlePreflight,
+  corsErrorHandler,
+} = require("./config/cors");
 const { initEventSystem, setupConsumers } = require("./rabbitMQ");
 
 var app = express();
@@ -36,7 +40,10 @@ app.use(express.json({ limit: "200mb" }));
 
 app.use(loggerMiddleware);
 
-app.use(cors());
+// CORS middleware with enhanced configuration
+app.use(handlePreflight);
+app.use(corsMiddleware);
+app.use(corsErrorHandler);
 
 app.use(
   session({
