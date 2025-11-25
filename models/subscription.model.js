@@ -11,6 +11,11 @@ const {
 
 const SubscriptionSchema = new mongoose.Schema(
   {
+    tenantId: {
+      type: String,
+      required: false,
+      index: true,
+    },
     profileId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "profiles",
