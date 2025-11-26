@@ -12,7 +12,7 @@
     "url": "https://github.com/kashif147/subscription-service.git"
   },
   "dependencies": {
-    "@projectShell/rabbitmq-middleware": "file:../rabbitmq-middleware",
+    "@projectShell/rabbitmq-middleware": "github:kashif147/rabbitmq-middleware",
     "amqplib": "^0.10.9",
     "axios": "^1.8.4",
     "bcryptjs": "^3.0.2",
