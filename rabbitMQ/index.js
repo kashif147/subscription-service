@@ -10,8 +10,25 @@ const {
 } = require("./listeners/user.crm.listener");
 
 async function initEventSystem() {
+	const rabbitUrl = process.env.RABBIT_URL;
+	
+	if (!rabbitUrl) {
+		throw new Error("RABBIT_URL environment variable is not set");
+	}
+	
+	// Ensure URL has proper protocol prefix
+	let url = rabbitUrl.trim();
+	if (!url.startsWith("amqp://") && !url.startsWith("amqps://")) {
+		// If URL doesn't have protocol, assume amqp://
+		if (url.includes("://")) {
+			throw new Error(`RABBIT_URL must use amqp:// or amqps:// protocol. Got: ${url.split("://")[0]}://`);
+		}
+		url = `amqp://${url}`;
+		console.warn(`⚠️ RABBIT_URL missing protocol prefix, assuming amqp://. Full URL: ${url.replace(/\/\/.*@/, "//***@")}`);
+	}
+	
 	await init({
-		url: process.env.RABBIT_URL,
+		url: url,
 		logger: console,
 		prefetch: 10,
 	});
