@@ -5,6 +5,8 @@ const mongoose = require("mongoose");
 const {
   MEMBERSHIP_STATUS,
   MEMBERSHIP_MOVEMENT,
+  PAYMENT_TYPE,
+  PAYMENT_FREQUENCY,
 } = require("../../constants/enums");
 
 function endOfYear(date) {
@@ -156,7 +158,6 @@ async function handleSubscriptionUpsertRequested(payload, context) {
     // Create new subscription
     const subscriptionData = {
       profileId: profileIdObjectId,
-      applicationId,
       subscriptionYear,
       isCurrent: true,
       subscriptionStatus: MEMBERSHIP_STATUS.ACTIVE,
@@ -164,16 +165,67 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       endDate,
       rolloverDate,
       membershipMovement,
-      membershipCategory, // accepted only on create
-      paymentType,
-      payrollNo,
-      paymentFrequency,
     };
+
+    // Only include optional fields if they have valid values
+    if (applicationId != null) {
+      subscriptionData.applicationId = applicationId;
+    }
+    if (membershipCategory != null && membershipCategory !== "") {
+      subscriptionData.membershipCategory = membershipCategory;
+    }
+    if (
+      paymentType != null &&
+      Object.values(PAYMENT_TYPE).includes(paymentType)
+    ) {
+      subscriptionData.paymentType = paymentType;
+    }
+    if (payrollNo != null && payrollNo !== "") {
+      subscriptionData.payrollNo = payrollNo;
+    }
+    if (
+      paymentFrequency != null &&
+      Object.values(PAYMENT_FREQUENCY).includes(paymentFrequency)
+    ) {
+      subscriptionData.paymentFrequency = paymentFrequency;
+    }
 
     // Add tenantId if provided (for multi-tenant support)
     if (tenantId) {
       subscriptionData.tenantId = tenantId;
     }
+
+    console.log(
+      "🔍 [SUBSCRIPTION_UPSERT_LISTENER] Validated subscription data:",
+      {
+        fieldsCount: Object.keys(subscriptionData).length,
+        hasPaymentType: !!subscriptionData.paymentType,
+        hasPaymentFrequency: !!subscriptionData.paymentFrequency,
+        hasMembershipCategory: !!subscriptionData.membershipCategory,
+      }
+    );
+
+    // Helper function to safely serialize data for logging
+    const safeSerialize = (obj) => {
+      return JSON.stringify(
+        obj,
+        (key, value) => {
+          if (
+            value &&
+            typeof value === "object" &&
+            value.constructor &&
+            value.constructor.name === "ObjectId"
+          ) {
+            return value.toString();
+          }
+          if (value instanceof Date) {
+            return value.toISOString();
+          }
+          return value;
+        },
+        2
+      );
+    };
 
     console.log(
       "📝 [SUBSCRIPTION_UPSERT_LISTENER] Creating new subscription:",
@@ -184,8 +236,31 @@ async function handleSubscriptionUpsertRequested(payload, context) {
         hasTenantId: !!tenantId,
       }
     );
+    console.log(
+      "📋 [SUBSCRIPTION_UPSERT_LISTENER] Subscription data:",
+      safeSerialize(subscriptionData)
+    );
 
-    const newSub = await Subscription.create(subscriptionData);
+    let newSub;
+    try {
+      newSub = await Subscription.create(subscriptionData);
+      console.log(
+        "✅ [SUBSCRIPTION_UPSERT_LISTENER] Subscription.create() succeeded"
+      );
+    } catch (createError) {
+      console.error(
+        "❌ [SUBSCRIPTION_UPSERT_LISTENER] Subscription.create() failed:",
+        {
+          error: createError.message,
+          stack: createError.stack,
+          name: createError.name,
+          code: createError.code,
+          subscriptionData: JSON.stringify(subscriptionData, null, 2),
+          validationErrors: createError.errors,
+        }
+      );
+      throw createError;
+    }
 
     console.log(
       "✅ [SUBSCRIPTION_UPSERT_LISTENER] Subscription created successfully:",
@@ -216,20 +291,33 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       "✅ [SUBSCRIPTION_UPSERT_LISTENER] Subscription current updated event published"
     );
   } catch (error) {
+    // Enhanced error logging with multiple console methods to ensure visibility
+    const errorDetails = {
+      error: error.message,
+      stack: error.stack,
+      name: error.name,
+      code: error.code,
+      payload: {
+        eventId: payload?.eventId,
+        correlationId: payload?.correlationId,
+        tenantId: payload?.tenantId,
+        profileId: payload?.data?.profileId,
+        dateJoined: payload?.data?.dateJoined,
+      },
+    };
+
+    // Use multiple logging methods to ensure visibility
     console.error(
-      "❌ [SUBSCRIPTION_UPSERT_LISTENER] Error handling subscription upsert:",
-      {
-        error: error.message,
-        stack: error.stack,
-        payload: {
-          eventId: payload?.eventId,
-          correlationId: payload?.correlationId,
-          tenantId: payload?.tenantId,
-          profileId: payload?.data?.profileId,
-          dateJoined: payload?.data?.dateJoined,
-        },
-      }
+      "❌ [SUBSCRIPTION_UPSERT_LISTENER] Error handling subscription upsert:"
     );
+    console.error(JSON.stringify(errorDetails, null, 2));
+    console.error("Error details:", errorDetails);
+
+    // Also log to stderr explicitly
+    process.stderr.write(
+      `[SUBSCRIPTION_UPSERT_LISTENER ERROR] ${error.message}\n${error.stack}\n`
+    );
+
     throw error; // Re-throw to let RabbitMQ middleware handle retry/nack
   }
 }
@@ -239,10 +327,18 @@ async function registerSubscriptionUpsertConsumer() {
     console.log("🔧 [SETUP] Registering subscription upsert consumer...");
     console.log("   Event:", MEMBERSHIP_EVENTS.SUBSCRIPTION_UPSERT_REQUESTED);
     console.log("   Exchange: membership.events");
+    console.log(
+      "   Handler function:",
+      typeof handleSubscriptionUpsertRequested
+    );
 
     consumer.registerHandler(
       MEMBERSHIP_EVENTS.SUBSCRIPTION_UPSERT_REQUESTED,
       handleSubscriptionUpsertRequested
+    );
+    console.log(
+      "✅ Handler registered for event:",
+      MEMBERSHIP_EVENTS.SUBSCRIPTION_UPSERT_REQUESTED
     );
 
     const queueName = "subscription-service.membership.events";
@@ -261,10 +357,21 @@ async function registerSubscriptionUpsertConsumer() {
 
     await consumer.consume(queueName, { prefetch: 10 });
     console.log("✅ Consumer started for queue:", queueName);
+    console.log(
+      "📡 [SETUP] Subscription upsert consumer fully initialized and listening"
+    );
   } catch (error) {
     console.error(
-      "❌ [SETUP] Failed to register subscription upsert consumer:",
-      error
+      "❌ [SETUP] Failed to register subscription upsert consumer:"
+    );
+    console.error("Error message:", error.message);
+    console.error("Error stack:", error.stack);
+    console.error(
+      "Full error:",
+      JSON.stringify(error, Object.getOwnPropertyNames(error), 2)
+    );
+    process.stderr.write(
+      `[SETUP ERROR] Failed to register subscription upsert consumer: ${error.message}\n${error.stack}\n`
     );
     throw error;
   }
