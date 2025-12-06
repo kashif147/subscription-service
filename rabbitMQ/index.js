@@ -12,8 +12,9 @@ const {
 async function initEventSystem() {
 	const rabbitUrl = process.env.RABBIT_URL;
 	
-	if (!rabbitUrl) {
-		throw new Error("RABBIT_URL environment variable is not set");
+	// Trim and validate - check after trimming to catch whitespace-only values
+	if (!rabbitUrl || !rabbitUrl.trim()) {
+		throw new Error("RABBIT_URL environment variable is not set or is empty");
 	}
 	
 	// Ensure URL has proper protocol prefix
@@ -23,8 +24,17 @@ async function initEventSystem() {
 		if (url.includes("://")) {
 			throw new Error(`RABBIT_URL must use amqp:// or amqps:// protocol. Got: ${url.split("://")[0]}://`);
 		}
+		// Ensure there's content after prepending protocol
+		if (!url || url.length === 0) {
+			throw new Error("RABBIT_URL is empty or contains only whitespace");
+		}
 		url = `amqp://${url}`;
 		console.warn(`⚠️ RABBIT_URL missing protocol prefix, assuming amqp://. Full URL: ${url.replace(/\/\/.*@/, "//***@")}`);
+	}
+	
+	// Validate that URL is not just the protocol
+	if (url === "amqp://" || url === "amqps://") {
+		throw new Error("RABBIT_URL must include host information, not just the protocol");
 	}
 	
 	await init({
