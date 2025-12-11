@@ -9,6 +9,41 @@ const {
 	handleCrmUserUpdated,
 } = require("./listeners/user.crm.listener");
 
+// Custom logger wrapper to ensure RabbitMQ logs appear in Azure Log Stream
+// Maps logger.info() to console.log() so logs are visible
+const rabbitMQLogger = {
+	info: (...args) => {
+		const prefix = "[RabbitMQ]";
+		if (args.length === 1 && typeof args[0] === "string") {
+			console.log(`${prefix} ${args[0]}`);
+		} else if (args.length === 2 && typeof args[0] === "string" && typeof args[1] === "object") {
+			console.log(`${prefix} ${args[0]}`, args[1]);
+		} else {
+			console.log(prefix, ...args);
+		}
+	},
+	warn: (...args) => {
+		const prefix = "[RabbitMQ]";
+		if (args.length === 1 && typeof args[0] === "string") {
+			console.warn(`${prefix} ${args[0]}`);
+		} else if (args.length === 2 && typeof args[0] === "string" && typeof args[1] === "object") {
+			console.warn(`${prefix} ${args[0]}`, args[1]);
+		} else {
+			console.warn(prefix, ...args);
+		}
+	},
+	error: (...args) => {
+		const prefix = "[RabbitMQ]";
+		if (args.length === 1 && typeof args[0] === "string") {
+			console.error(`${prefix} ${args[0]}`);
+		} else if (args.length === 2 && typeof args[0] === "string" && typeof args[1] === "object") {
+			console.error(`${prefix} ${args[0]}`, args[1]);
+		} else {
+			console.error(prefix, ...args);
+		}
+	},
+};
+
 async function initEventSystem() {
 	const rabbitUrl = process.env.RABBIT_URL;
 	
@@ -39,7 +74,7 @@ async function initEventSystem() {
 	
 	await init({
 		url: url,
-		logger: console,
+		logger: rabbitMQLogger,
 		prefetch: 10,
 	});
 }
