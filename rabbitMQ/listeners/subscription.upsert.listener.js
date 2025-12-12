@@ -1,6 +1,7 @@
 const { MEMBERSHIP_EVENTS } = require("../events");
 const { consumer, publisher } = require("@projectShell/rabbitmq-middleware");
 const Subscription = require("../../models/subscription.model");
+const User = require("../../models/user.model");
 const mongoose = require("mongoose");
 const {
   MEMBERSHIP_STATUS,
@@ -40,6 +41,8 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       paymentType = null,
       payrollNo = null,
       paymentFrequency = null,
+      userId = null,
+      userEmail = null,
     } = data || {};
 
     // Validate required fields
@@ -52,6 +55,30 @@ async function handleSubscriptionUpsertRequested(payload, context) {
     if (!tenantId) {
       console.warn(
         "⚠️ [SUBSCRIPTION_UPSERT_LISTENER] tenantId is missing in payload"
+      );
+    }
+
+    // Validate and get user from subscription-service
+    let subscriptionUser = null;
+    if (userId && tenantId) {
+      subscriptionUser = await User.findOne({ tenantId, userId });
+      if (!subscriptionUser && userEmail) {
+        // Try to find by email as fallback
+        subscriptionUser = await User.findOne({ tenantId, userEmail });
+      }
+      
+      if (!subscriptionUser) {
+        console.warn(
+          `⚠️ [SUBSCRIPTION_UPSERT_LISTENER] User not found in subscription-service for userId: ${userId}, userEmail: ${userEmail}. Subscription will be created without user reference. User should be created via user.crm.created.v1 event first.`
+        );
+      } else {
+        console.log(
+          `✅ [SUBSCRIPTION_UPSERT_LISTENER] Found user in subscription-service: ${subscriptionUser._id} (userId: ${userId})`
+        );
+      }
+    } else {
+      console.warn(
+        `⚠️ [SUBSCRIPTION_UPSERT_LISTENER] userId or tenantId missing in payload. Subscription will be created without user reference.`
       );
     }
 
@@ -195,6 +222,25 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       subscriptionData.tenantId = tenantId;
     }
 
+    // Add meta.createdBy if user exists in subscription-service
+    if (subscriptionUser) {
+      subscriptionData.meta = {
+        createdBy: subscriptionUser._id,
+        updatedBy: null,
+      };
+      console.log(
+        `✅ [SUBSCRIPTION_UPSERT_LISTENER] Subscription will be linked to user: ${subscriptionUser._id}`
+      );
+    } else {
+      subscriptionData.meta = {
+        createdBy: null,
+        updatedBy: null,
+      };
+      console.warn(
+        `⚠️ [SUBSCRIPTION_UPSERT_LISTENER] Subscription will be created without user reference. Ensure user exists in subscription-service.`
+      );
+    }
+
     console.log(
       "🔍 [SUBSCRIPTION_UPSERT_LISTENER] Validated subscription data:",
       {
@@ -202,6 +248,7 @@ async function handleSubscriptionUpsertRequested(payload, context) {
         hasPaymentType: !!subscriptionData.paymentType,
         hasPaymentFrequency: !!subscriptionData.paymentFrequency,
         hasMembershipCategory: !!subscriptionData.membershipCategory,
+        hasUserReference: !!subscriptionData.meta?.createdBy,
       }
     );
 
