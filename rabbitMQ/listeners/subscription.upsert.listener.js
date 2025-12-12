@@ -20,14 +20,22 @@ function startOfNextYear(date) {
 }
 
 async function handleSubscriptionUpsertRequested(payload, context) {
+  console.log(
+    "🚀 [SUBSCRIPTION_UPSERT_LISTENER] ===== EVENT RECEIVED ====="
+  );
+  console.log("📥 [SUBSCRIPTION_UPSERT_LISTENER] Received subscription upsert requested event:");
+  console.log("   Full payload:", JSON.stringify(payload, null, 2));
+  console.log("   Context:", context ? JSON.stringify(context, null, 2) : "null");
+  
   try {
     console.log(
-      "📥 [SUBSCRIPTION_UPSERT_LISTENER] Received subscription upsert requested event:",
+      "📥 [SUBSCRIPTION_UPSERT_LISTENER] Processing event:",
       {
-        eventId: payload.eventId,
-        correlationId: payload.correlationId,
-        tenantId: payload.tenantId,
-        data: payload.data,
+        eventId: payload?.eventId,
+        correlationId: payload?.correlationId,
+        tenantId: payload?.tenantId,
+        hasData: !!payload?.data,
+        dataKeys: payload?.data ? Object.keys(payload.data) : [],
       }
     );
 
@@ -46,11 +54,27 @@ async function handleSubscriptionUpsertRequested(payload, context) {
 
     // Validate required fields
     if (!profileId) {
+      console.error("❌ [SUBSCRIPTION_UPSERT_LISTENER] profileId is required but missing");
       throw new Error("profileId is required");
     }
+    
+    // Handle dateJoined - it might be a Date object, ISO string, or missing
+    let startDate;
     if (!dateJoined) {
-      throw new Error("dateJoined is required");
+      console.warn(
+        "⚠️ [SUBSCRIPTION_UPSERT_LISTENER] dateJoined is missing, using current date"
+      );
+      startDate = new Date();
+    } else {
+      startDate = new Date(dateJoined);
+      if (isNaN(startDate.getTime())) {
+        console.warn(
+          `⚠️ [SUBSCRIPTION_UPSERT_LISTENER] Invalid dateJoined format: ${dateJoined}, using current date`
+        );
+        startDate = new Date();
+      }
     }
+    
     if (!tenantId) {
       console.warn(
         "⚠️ [SUBSCRIPTION_UPSERT_LISTENER] tenantId is missing in payload"
@@ -65,12 +89,8 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       : null;
 
     if (!profileIdObjectId) {
+      console.error(`❌ [SUBSCRIPTION_UPSERT_LISTENER] Invalid profileId format: ${profileId}`);
       throw new Error(`Invalid profileId format: ${profileId}`);
-    }
-
-    const startDate = new Date(dateJoined);
-    if (isNaN(startDate.getTime())) {
-      throw new Error(`Invalid dateJoined format: ${dateJoined}`);
     }
 
     const subscriptionYear = startDate.getUTCFullYear();
