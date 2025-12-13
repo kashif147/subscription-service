@@ -1,5 +1,4 @@
-const { gatewaySecurity } = require("@membership/policy-middleware/security");
-const { validateGatewayRequest } = gatewaySecurity;
+const { validateGatewayRequest } = require("@membership/policy-middleware/security");
 
 const ensureAuthenticated = (req, res, next) => {
   // Check for gateway-verified JWT (trust gateway headers with validation)
