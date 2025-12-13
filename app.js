@@ -121,9 +121,9 @@ app.use(express.json({ limit: "200mb" }));
 app.use(loggerMiddleware);
 
 // CORS middleware with enhanced configuration
-app.use(handlePreflight);
-app.use(corsMiddleware);
-app.use(corsErrorHandler);
+// app.use(handlePreflight);
+// app.use(corsMiddleware);
+// app.use(corsErrorHandler);
 
 app.use(
   session({
