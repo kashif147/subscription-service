@@ -23,7 +23,11 @@ async function handleSubscriptionUpsertRequested(payload, context) {
   console.log(
     "🚀 [SUBSCRIPTION_UPSERT_LISTENER] ===== EVENT RECEIVED ====="
   );
+  const exchange = context?.exchange || context?.message?.fields?.exchange || "unknown";
+  const routingKey = context?.routingKey || context?.message?.fields?.routingKey || "unknown";
   console.log("📥 [SUBSCRIPTION_UPSERT_LISTENER] Received subscription upsert requested event:");
+  console.log("   Exchange:", exchange);
+  console.log("   Routing Key:", routingKey);
   console.log("   Full payload:", JSON.stringify(payload, null, 2));
   console.log("   Context:", context ? JSON.stringify(context, null, 2) : "null");
   
@@ -356,12 +360,12 @@ async function registerSubscriptionUpsertConsumer() {
   try {
     console.log("🔧 [SETUP] Registering subscription upsert consumer...");
     console.log("   Event:", MEMBERSHIP_EVENTS.SUBSCRIPTION_UPSERT_REQUESTED);
-    console.log("   Exchange: membership.events");
     console.log(
       "   Handler function:",
       typeof handleSubscriptionUpsertRequested
     );
 
+    // Register the handler (same handler for both exchanges)
     consumer.registerHandler(
       MEMBERSHIP_EVENTS.SUBSCRIPTION_UPSERT_REQUESTED,
       handleSubscriptionUpsertRequested
@@ -371,13 +375,14 @@ async function registerSubscriptionUpsertConsumer() {
       MEMBERSHIP_EVENTS.SUBSCRIPTION_UPSERT_REQUESTED
     );
 
-    const queueName = "subscription-service.membership.events";
-    console.log("   Queue:", queueName);
+    // Queue for membership.events exchange (primary route)
+    const membershipQueueName = "subscription-service.membership.events";
+    console.log("   Queue (membership.events):", membershipQueueName);
 
-    await consumer.createQueue(queueName, { durable: true });
-    console.log("✅ Queue created:", queueName);
+    await consumer.createQueue(membershipQueueName, { durable: true });
+    console.log("✅ Queue created:", membershipQueueName);
 
-    await consumer.bindQueue(queueName, "membership.events", [
+    await consumer.bindQueue(membershipQueueName, "membership.events", [
       MEMBERSHIP_EVENTS.SUBSCRIPTION_UPSERT_REQUESTED,
     ]);
     console.log(
@@ -385,10 +390,31 @@ async function registerSubscriptionUpsertConsumer() {
       MEMBERSHIP_EVENTS.SUBSCRIPTION_UPSERT_REQUESTED
     );
 
-    await consumer.consume(queueName, { prefetch: 10 });
-    console.log("✅ Consumer started for queue:", queueName);
+    await consumer.consume(membershipQueueName, { prefetch: 10 });
+    console.log("✅ Consumer started for queue:", membershipQueueName);
+
+    // Also listen on application.events exchange (fallback route from profile service)
+    // This ensures we receive the event even if profile service publishes to application.events
+    const applicationQueueName = "subscription-service.application.events";
+    console.log("   Queue (application.events):", applicationQueueName);
+    console.log("   Exchange: application.events (additional route)");
+
+    await consumer.createQueue(applicationQueueName, { durable: true });
+    console.log("✅ Queue created:", applicationQueueName);
+
+    await consumer.bindQueue(applicationQueueName, "application.events", [
+      MEMBERSHIP_EVENTS.SUBSCRIPTION_UPSERT_REQUESTED,
+    ]);
     console.log(
-      "📡 [SETUP] Subscription upsert consumer fully initialized and listening"
+      "✅ Queue bound to exchange 'application.events' with routing key:",
+      MEMBERSHIP_EVENTS.SUBSCRIPTION_UPSERT_REQUESTED
+    );
+
+    await consumer.consume(applicationQueueName, { prefetch: 10 });
+    console.log("✅ Consumer started for queue:", applicationQueueName);
+
+    console.log(
+      "📡 [SETUP] Subscription upsert consumer fully initialized and listening on both exchanges"
     );
   } catch (error) {
     console.error(
