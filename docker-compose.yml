@@ -2,15 +2,14 @@ version: "3.9"
 
 services:
   subscription-service:
-    build: .
     container_name: subscription-service
+    build: .
     ports:
       - "4003:4003"
     restart: always
     networks:
-      - shared-net
+      - gateway_app-net
 
 networks:
-  shared-net:
+  gateway_app-net:
     external: true
-    name: gateway_app-net
