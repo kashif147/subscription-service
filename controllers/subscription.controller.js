@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const Subscription = require("../models/subscription.model");
+const { USER_TYPE } = require("../constants/enums");
 
 // Get current subscription start date for a profile
 // GET /api/v1/subscriptions/profile/:profileId/current
@@ -37,6 +38,14 @@ async function getCurrentByProfile(req, res) {
 // GET /api/v1/subscriptions?applicationId=xxx
 async function getSubscriptions(req, res) {
   try {
+    // Check if user is CRM
+    if (!req.user || req.user.userType !== USER_TYPE.CRM) {
+      return res.status(403).json({
+        status: 'fail',
+        data: 'Access denied. CRM users only.',
+      });
+    }
+
     const { applicationId } = req.query;
     
     // Build base query - exclude deleted
