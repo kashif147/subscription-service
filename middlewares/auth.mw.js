@@ -19,8 +19,13 @@ const authenticate = (req, res, next) => {
   const token = authHeader.split(" ")[1];
 
   try {
-    // Keep using the same secret as before to avoid breaking existing tokens
-    const decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
+    // Verify JWT token using JWT_SECRET (same as profile-service)
+    if (!process.env.JWT_SECRET) {
+      console.error("JWT_SECRET environment variable is not set!");
+      throw new Error("JWT_SECRET environment variable is required");
+    }
+    
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     // Extract tenantId in a similar way to other services
     const tenantId =
