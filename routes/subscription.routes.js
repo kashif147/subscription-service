@@ -4,12 +4,12 @@ const {
   getCurrentByProfile, 
   getSubscriptions
 } = require("../controllers/subscription.controller");
-const { requireCRM } = require("../middlewares/auth.mw");
+const { authenticate } = require("../middlewares/auth.mw");
 
 // Public/simple endpoint to fetch current subscription start date by profileId
 router.get("/profile/:profileId/current", getCurrentByProfile);
 
-
-router.get("/", requireCRM, getSubscriptions);
+// CRM-only endpoint: Get all subscriptions or single subscription by applicationId
+router.get("/", authenticate, getSubscriptions);
 
 module.exports = router;
