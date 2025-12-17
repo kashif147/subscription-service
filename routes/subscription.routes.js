@@ -10,6 +10,6 @@ const { authenticate, requireCRM } = require("../middlewares/auth.mw");
 router.get("/profile/:profileId/current", getCurrentByProfile);
 
 
-router.get("/", authenticate, requireCRM, getSubscriptions);
+router.get("/", requireCRM, getSubscriptions);
 
 module.exports = router;
