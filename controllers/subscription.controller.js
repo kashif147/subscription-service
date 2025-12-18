@@ -62,8 +62,9 @@ async function getSubscriptions(req, res) {
       .lean();
 
     return res.success({
-      data: subscriptions,
       count: subscriptions.length,
+      data: subscriptions,
+      
     });
   } catch (error) {
     console.error("Error fetching subscriptions:", error.message);
