@@ -44,12 +44,18 @@ async function getSubscriptions(req, res) {
       });
     }
 
-    const { applicationId, isCurrent } = req.query;
+    const { profileId, isCurrent } = req.query;
     
     const query = { deleted: { $ne: true } };
 
-    if (applicationId) {
-      query.applicationId = applicationId;
+    if (profileId) {
+      if (!mongoose.Types.ObjectId.isValid(profileId)) {
+        return res.status(400).json({
+          status: 'fail',
+          data: 'Invalid profileId',
+        });
+      }
+      query.profileId = new mongoose.Types.ObjectId(profileId);
     }
 
     if (isCurrent === "true") {
