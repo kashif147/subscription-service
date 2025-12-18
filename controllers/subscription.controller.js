@@ -34,7 +34,6 @@ async function getCurrentByProfile(req, res) {
   }
 }
 
-
 async function getSubscriptions(req, res) {
   try {
     // Check if user is CRM
@@ -55,6 +54,8 @@ async function getSubscriptions(req, res) {
 
     if (isCurrent === "true") {
       query.isCurrent = true;
+    }else if (isCurrent === "false") {
+      query.isCurrent = false;
     }
 
     const subscriptions = await Subscription.find(query)
