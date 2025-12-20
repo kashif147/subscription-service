@@ -54,6 +54,7 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       paymentFrequency = null,
       userId = null,
       userEmail = null,
+      reviewerId = null, // CRM user ID for meta.createdBy and meta.updatedBy
     } = data || {};
 
     // Validate required fields
@@ -157,7 +158,20 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       if (paymentFrequency != null) update.paymentFrequency = paymentFrequency;
       if (payrollNo != null) update.payrollNo = payrollNo;
       if (Object.keys(update).length > 0) {
-        update["meta.updatedBy"] = null;
+        // Set updatedBy to reviewerId (CRM user ID) if provided
+        let updatedByObjectId = null;
+        if (reviewerId) {
+          if (mongoose.Types.ObjectId.isValid(reviewerId)) {
+            updatedByObjectId = typeof reviewerId === "string"
+              ? new mongoose.Types.ObjectId(reviewerId)
+              : reviewerId;
+          } else if (reviewerId !== "bypass-user") {
+            console.warn(
+              `⚠️ [SUBSCRIPTION_UPSERT_LISTENER] Invalid reviewerId format for update: ${reviewerId}, setting updatedBy to null`
+            );
+          }
+        }
+        update["meta.updatedBy"] = updatedByObjectId;
         await Subscription.updateOne(
           { _id: existingForYear._id },
           { $set: update }
@@ -221,10 +235,25 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       subscriptionData.tenantId = tenantId;
     }
 
-    // Set meta fields (createdBy will be null if user doesn't exist, subscription will still be created)
+    // Set meta fields - use reviewerId (CRM user ID) if provided, otherwise null
+    let createdByObjectId = null;
+    if (reviewerId) {
+      // Convert reviewerId to ObjectId if it's a valid ObjectId string
+      if (mongoose.Types.ObjectId.isValid(reviewerId)) {
+        createdByObjectId = typeof reviewerId === "string"
+          ? new mongoose.Types.ObjectId(reviewerId)
+          : reviewerId;
+      } else if (reviewerId !== "bypass-user") {
+        // Log warning if reviewerId is not a valid ObjectId and not bypass-user
+        console.warn(
+          `⚠️ [SUBSCRIPTION_UPSERT_LISTENER] Invalid reviewerId format: ${reviewerId}, setting createdBy to null`
+        );
+      }
+    }
+    
     subscriptionData.meta = {
-      createdBy: null,
-      updatedBy: null,
+      createdBy: createdByObjectId,
+      updatedBy: createdByObjectId, // Set updatedBy to same as createdBy for new subscriptions
     };
 
     console.log(
