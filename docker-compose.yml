@@ -4,6 +4,9 @@ services:
   subscription-service:
     container_name: subscription-service
     build: .
+    env_file:
+      - /home/deploy/config/.env.common
+      - .env.staging
     ports:
       - "4003:4003"
     restart: always
