@@ -49,6 +49,14 @@ const ensureAuthenticated = (req, res, next) => {
       console.warn("Failed to parse x-user-permissions header:", e.message);
     }
 
+    // Set request context with tenant isolation (consistent with other services)
+    req.ctx = {
+      tenantId,
+      userId,
+      roles,
+      permissions,
+    };
+
     // Set user object for backward compatibility
     req.user = {
       sub: userId,
@@ -79,10 +87,26 @@ const ensureAuthenticated = (req, res, next) => {
   const token = authHeader.split(" ")[1];
   try {
     const decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
+    
+    const tenantId = decoded.tenantId || decoded.tid;
+    const normalizedRoles = Array.isArray(decoded.roles)
+      ? decoded.roles
+          .map((role) => (typeof role === "string" ? role : role?.code))
+          .filter(Boolean)
+      : [];
+    
+    // Set request context with tenant isolation (consistent with other services)
+    req.ctx = {
+      tenantId,
+      userId: decoded.sub || decoded.id,
+      roles: normalizedRoles,
+      permissions: decoded.permissions || [],
+    };
+    
     req.user = decoded;
     req.userId = decoded.sub || decoded.id;
-    req.tenantId = decoded.tenantId || decoded.tid;
-    req.roles = decoded.roles || [];
+    req.tenantId = tenantId;
+    req.roles = normalizedRoles;
     req.permissions = decoded.permissions || [];
     next();
   } catch (err) {
