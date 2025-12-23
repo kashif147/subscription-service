@@ -12,7 +12,7 @@
     "url": "https://github.com/kashif147/subscription-service.git"
   },
   "dependencies": {
-    "@membership/policy-middleware": "file:../policy-middleware",
+    "@membership/policy-middleware": "github:kashif147/policy-middleware#gateway",
     "@projectShell/rabbitmq-middleware": "github:kashif147/rabbitmq-middleware",
     "amqplib": "^0.10.9",
     "axios": "^1.8.4",
