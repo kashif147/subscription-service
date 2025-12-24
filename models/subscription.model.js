@@ -22,6 +22,11 @@ const SubscriptionSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    userId: {
+      type: String,
+      default: null,
+      index: true,
+    }, // User ID (String) to link subscription to user for population
     applicationId: { type: String, default: null }, // need to decide if i want to keep it null for yearend renewal?
 
     subscriptionYear: { type: Number, required: true, index: true }, // NEW: yearly version of a subscription

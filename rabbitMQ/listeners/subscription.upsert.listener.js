@@ -1,6 +1,7 @@
 const { MEMBERSHIP_EVENTS } = require("../events");
 const { consumer, publisher } = require("@projectShell/rabbitmq-middleware");
 const Subscription = require("../../models/subscription.model");
+const User = require("../../models/user.model");
 const mongoose = require("mongoose");
 const {
   MEMBERSHIP_STATUS,
@@ -233,6 +234,42 @@ async function handleSubscriptionUpsertRequested(payload, context) {
     // Add tenantId if provided (for multi-tenant support)
     if (tenantId) {
       subscriptionData.tenantId = tenantId;
+    }
+
+    // Add userId if provided (to link subscription to user for population)
+    if (userId != null && userId !== "") {
+      subscriptionData.userId = userId;
+      
+      // Also create/update user in subscription-service user model for population
+      // This handles both CRM and PORTAL users (PORTAL users don't have events)
+      if (tenantId) {
+        try {
+          await User.findOneAndUpdate(
+            { tenantId, userId },
+            {
+              $set: {
+                userId,
+                userEmail: userEmail || null,
+                userFullName: null, // Will be populated from user events for CRM users
+                tenantId,
+              },
+            },
+            {
+              upsert: true,
+              new: true,
+              setDefaultsOnInsert: true,
+            }
+          );
+          console.log(
+            `✅ User synced in subscription-service for subscription: ${userId} (${userEmail})`
+          );
+        } catch (userError) {
+          console.warn(
+            `⚠️ Failed to sync user in subscription-service: ${userError.message}`
+          );
+          // Don't fail subscription creation if user sync fails
+        }
+      }
     }
 
     // Set meta fields - use reviewerId (CRM user ID) if provided, otherwise null
