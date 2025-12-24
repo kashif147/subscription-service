@@ -240,8 +240,8 @@ async function handleSubscriptionUpsertRequested(payload, context) {
     if (userId != null && userId !== "") {
       subscriptionData.userId = userId;
       
-      // Also create/update user in subscription-service user model for population
-      // This handles both CRM and PORTAL users (PORTAL users don't have events)
+      // Create/update PORTAL user in subscription-service for population
+      // (PORTAL users don't have separate events, so we sync them here)
       if (tenantId) {
         try {
           await User.findOneAndUpdate(
@@ -264,10 +264,10 @@ async function handleSubscriptionUpsertRequested(payload, context) {
             `✅ User synced in subscription-service for subscription: ${userId} (${userEmail})`
           );
         } catch (userError) {
-          console.warn(
+          console.error(
             `⚠️ Failed to sync user in subscription-service: ${userError.message}`
           );
-          // Don't fail subscription creation if user sync fails
+          // Don't fail subscription creation if user sync fails - subscription is more important
         }
       }
     }
