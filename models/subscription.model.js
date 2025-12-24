@@ -94,11 +94,11 @@ const SubscriptionSchema = new mongoose.Schema(
     deleted: { type: Boolean, default: false },
     // isActive: { type: Boolean, default: true },
   },
-  { timestamps: true, collection: "subscriptionDetails" }
+  { timestamps: true, collection: "subscription" }
 );
 // Very important for performance:
 SubscriptionSchema.index(
   { tenantId: 1, profileId: 1, isCurrent: 1 },
   { unique: false }
 );
-module.exports = mongoose.model("subscriptionDetails", SubscriptionSchema);
+module.exports = mongoose.model("subscription", SubscriptionSchema);
