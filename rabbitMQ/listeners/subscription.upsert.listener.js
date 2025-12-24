@@ -239,37 +239,6 @@ async function handleSubscriptionUpsertRequested(payload, context) {
     // Add userId if provided (to link subscription to user for population)
     if (userId != null && userId !== "") {
       subscriptionData.userId = userId;
-      
-      // Create/update PORTAL user in subscription-service for population
-      // (PORTAL users don't have separate events, so we sync them here)
-      if (tenantId) {
-        try {
-          await User.findOneAndUpdate(
-            { tenantId, userId },
-            {
-              $set: {
-                userId,
-                userEmail: userEmail || null,
-                userFullName: null, // Will be populated from user events for CRM users
-                tenantId,
-              },
-            },
-            {
-              upsert: true,
-              new: true,
-              setDefaultsOnInsert: true,
-            }
-          );
-          console.log(
-            `✅ User synced in subscription-service for subscription: ${userId} (${userEmail})`
-          );
-        } catch (userError) {
-          console.error(
-            `⚠️ Failed to sync user in subscription-service: ${userError.message}`
-          );
-          // Don't fail subscription creation if user sync fails - subscription is more important
-        }
-      }
     }
 
     // Set meta fields - use reviewerId (CRM user ID) if provided, otherwise null
@@ -334,6 +303,7 @@ async function handleSubscriptionUpsertRequested(payload, context) {
         subscriptionYear,
         membershipMovement,
         hasTenantId: !!tenantId,
+        hasUserId: !!subscriptionData.userId,
       }
     );
     console.log(
@@ -343,9 +313,17 @@ async function handleSubscriptionUpsertRequested(payload, context) {
 
     let newSub;
     try {
+      console.log(
+        "🔄 [SUBSCRIPTION_UPSERT_LISTENER] About to call Subscription.create()..."
+      );
       newSub = await Subscription.create(subscriptionData);
       console.log(
-        "✅ [SUBSCRIPTION_UPSERT_LISTENER] Subscription.create() succeeded"
+        "✅ [SUBSCRIPTION_UPSERT_LISTENER] Subscription.create() succeeded",
+        {
+          subscriptionId: newSub._id.toString(),
+          profileId: newSub.profileId.toString(),
+          subscriptionYear: newSub.subscriptionYear,
+        }
       );
     } catch (createError) {
       console.error(
@@ -355,9 +333,13 @@ async function handleSubscriptionUpsertRequested(payload, context) {
           stack: createError.stack,
           name: createError.name,
           code: createError.code,
-          subscriptionData: JSON.stringify(subscriptionData, null, 2),
+          subscriptionData: safeSerialize(subscriptionData),
           validationErrors: createError.errors,
         }
+      );
+      // Log to stderr for better visibility
+      process.stderr.write(
+        `[SUBSCRIPTION CREATE ERROR] ${createError.message}\n${createError.stack}\n`
       );
       throw createError;
     }
@@ -370,6 +352,37 @@ async function handleSubscriptionUpsertRequested(payload, context) {
         subscriptionYear,
       }
     );
+
+    // Create/update PORTAL user in subscription-service for population (AFTER subscription is created)
+    // (PORTAL users don't have separate events, so we sync them here)
+    if (userId != null && userId !== "" && tenantId) {
+      try {
+        await User.findOneAndUpdate(
+          { tenantId, userId },
+          {
+            $set: {
+              userId,
+              userEmail: userEmail || null,
+              userFullName: null, // Will be populated from user events for CRM users
+              tenantId,
+            },
+          },
+          {
+            upsert: true,
+            new: true,
+            setDefaultsOnInsert: true,
+          }
+        );
+        console.log(
+          `✅ User synced in subscription-service for subscription: ${userId} (${userEmail})`
+        );
+      } catch (userError) {
+        console.error(
+          `⚠️ Failed to sync user in subscription-service: ${userError.message}`
+        );
+        // Don't fail subscription creation if user sync fails - subscription is already created
+      }
+    }
 
     // Publish event so profile-service can update Profile.currentSubscriptionId
     await publisher.publish(
