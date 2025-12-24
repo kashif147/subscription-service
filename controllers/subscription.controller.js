@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const Subscription = require("../models/subscription.model");
+const User = require("../models/user.model");
 const { USER_TYPE } = require("../constants/enums");
 
 // Get current subscription start date for a profile
@@ -68,10 +69,63 @@ async function getSubscriptions(req, res) {
       .sort({ createdAt: -1 })
       .lean();
 
+    // Populate user fullname and meta.createdBy/updatedBy for each subscription
+    const subscriptionsWithUser = await Promise.all(
+      subscriptions.map(async (subscription) => {
+        const result = { ...subscription };
+        
+        // Populate subscription owner user (userId field)
+        if (subscription.userId && subscription.tenantId) {
+          try {
+            const user = await User.findOne({
+              tenantId: subscription.tenantId,
+              userId: subscription.userId,
+            }).lean();
+            
+            result.user = user
+              ? {
+                  userId: user.userId,
+                  userEmail: user.userEmail,
+                  userFullName: user.userFullName,
+                }
+              : null;
+          } catch (error) {
+            console.error(
+              `Error fetching user for subscription ${subscription._id}:`,
+              error.message
+            );
+            result.user = null;
+          }
+        } else {
+          result.user = null;
+        }
+        
+        // Populate lastModifiedBy (user name only) and lastModifiedAt
+        if (subscription.meta?.updatedBy) {
+          try {
+            const updatedByUser = await User.findById(subscription.meta.updatedBy).lean();
+            result.lastModifiedBy = updatedByUser?.userFullName || null;
+          } catch (error) {
+            console.error(
+              `Error fetching updatedBy user for subscription ${subscription._id}:`,
+              error.message
+            );
+            result.lastModifiedBy = null;
+          }
+        } else {
+          result.lastModifiedBy = null;
+        }
+        
+        // Set lastModifiedAt from updatedAt timestamp
+        result.lastModifiedAt = subscription.updatedAt || subscription.createdAt || null;
+        
+        return result;
+      })
+    );
+
     return res.success({
-      count: subscriptions.length,
-      data: subscriptions,
-      
+      count: subscriptionsWithUser.length,
+      data: subscriptionsWithUser,
     });
   } catch (error) {
     console.error("Error fetching subscriptions:", error.message);
