@@ -73,7 +73,7 @@ async function getSubscriptions(req, res) {
     const subscriptionsWithUser = await Promise.all(
       subscriptions.map(async (subscription) => {
         const result = { ...subscription };
-        
+
         // Populate subscription owner user (userId field)
         if (subscription.userId && subscription.tenantId) {
           try {

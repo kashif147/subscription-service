@@ -88,13 +88,13 @@ const SubscriptionSchema = new mongoose.Schema(
     },
 
     meta: {
-      createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "users" },
-      updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "users" },
+      createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+      updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     },
     deleted: { type: Boolean, default: false },
     // isActive: { type: Boolean, default: true },
   },
-  { timestamps: true }
+  { timestamps: true, collection: "subscriptionDetails" }
 );
 // Very important for performance:
 SubscriptionSchema.index(
