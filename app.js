@@ -155,6 +155,10 @@ app.get("/", (req, res) => {
   res.render("index", { title: "Subscription Service" });
 });
 
+app.get("/health", (req, res) => {
+  res.status(200).json({ status: "UP" });
+});
+
 app.use("/api/v1", require("./routes/index"));
 
 app.use(function (req, res, next) {
