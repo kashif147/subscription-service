@@ -79,12 +79,16 @@ const ensureAuthenticated = (req, res, next) => {
   // Fallback: Legacy Bearer token flow (for direct service calls)
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ message: "No token provided" });
+    return res.status(401).json({
+      status: "fail",
+      data: "Authorization header required",
+    });
   }
 
   // For legacy support, still allow JWT verification if no gateway headers
   const jwt = require("jsonwebtoken");
   const token = authHeader.split(" ")[1];
+
   try {
     const decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
     
@@ -110,8 +114,33 @@ const ensureAuthenticated = (req, res, next) => {
     req.permissions = decoded.permissions || [];
     next();
   } catch (err) {
-    return res.status(401).json({ message: "Invalid token" });
+    return res.status(401).json({
+      status: "fail",
+      data: "Invalid token",
+    });
   }
 };
 
-module.exports = { ensureAuthenticated };
+/**
+ * CRM-only guard, similar to CRM APIs in other services.
+ * Assumes `authenticate` has already run and set `req.user`.
+ */
+const requireCRM = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({
+      status: "fail",
+      data: "Authentication required",
+    });
+  }
+
+  if (req.user.userType !== USER_TYPE.CRM) {
+    return res.status(403).json({
+      status: "fail",
+      data: "Access denied. CRM users only.",
+    });
+  }
+
+  next();
+};
+
+module.exports = { authenticate, requireCRM };

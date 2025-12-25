@@ -1,6 +1,7 @@
 const { MEMBERSHIP_EVENTS } = require("../events");
 const { consumer, publisher } = require("@projectShell/rabbitmq-middleware");
 const Subscription = require("../../models/subscription.model");
+const User = require("../../models/user.model");
 const mongoose = require("mongoose");
 const {
   MEMBERSHIP_STATUS,
@@ -54,6 +55,7 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       paymentFrequency = null,
       userId = null,
       userEmail = null,
+      reviewerId = null, // CRM user ID for meta.createdBy and meta.updatedBy
     } = data || {};
 
     // Validate required fields
@@ -157,7 +159,20 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       if (paymentFrequency != null) update.paymentFrequency = paymentFrequency;
       if (payrollNo != null) update.payrollNo = payrollNo;
       if (Object.keys(update).length > 0) {
-        update["meta.updatedBy"] = null;
+        // Set updatedBy to reviewerId (CRM user ID) if provided
+        let updatedByObjectId = null;
+        if (reviewerId) {
+          if (mongoose.Types.ObjectId.isValid(reviewerId)) {
+            updatedByObjectId = typeof reviewerId === "string"
+              ? new mongoose.Types.ObjectId(reviewerId)
+              : reviewerId;
+          } else if (reviewerId !== "bypass-user") {
+            console.warn(
+              `⚠️ [SUBSCRIPTION_UPSERT_LISTENER] Invalid reviewerId format for update: ${reviewerId}, setting updatedBy to null`
+            );
+          }
+        }
+        update["meta.updatedBy"] = updatedByObjectId;
         await Subscription.updateOne(
           { _id: existingForYear._id },
           { $set: update }
@@ -221,10 +236,30 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       subscriptionData.tenantId = tenantId;
     }
 
-    // Set meta fields (createdBy will be null if user doesn't exist, subscription will still be created)
+    // Add userId if provided (to link subscription to user for population)
+    if (userId != null && userId !== "") {
+      subscriptionData.userId = userId;
+    }
+
+    // Set meta fields - use reviewerId (CRM user ID) if provided, otherwise null
+    let createdByObjectId = null;
+    if (reviewerId) {
+      // Convert reviewerId to ObjectId if it's a valid ObjectId string
+      if (mongoose.Types.ObjectId.isValid(reviewerId)) {
+        createdByObjectId = typeof reviewerId === "string"
+          ? new mongoose.Types.ObjectId(reviewerId)
+          : reviewerId;
+      } else if (reviewerId !== "bypass-user") {
+        // Log warning if reviewerId is not a valid ObjectId and not bypass-user
+        console.warn(
+          `⚠️ [SUBSCRIPTION_UPSERT_LISTENER] Invalid reviewerId format: ${reviewerId}, setting createdBy to null`
+        );
+      }
+    }
+    
     subscriptionData.meta = {
-      createdBy: null,
-      updatedBy: null,
+      createdBy: createdByObjectId,
+      updatedBy: createdByObjectId, // Set updatedBy to same as createdBy for new subscriptions
     };
 
     console.log(
@@ -268,6 +303,7 @@ async function handleSubscriptionUpsertRequested(payload, context) {
         subscriptionYear,
         membershipMovement,
         hasTenantId: !!tenantId,
+        hasUserId: !!subscriptionData.userId,
       }
     );
     console.log(
@@ -277,9 +313,17 @@ async function handleSubscriptionUpsertRequested(payload, context) {
 
     let newSub;
     try {
+      console.log(
+        "🔄 [SUBSCRIPTION_UPSERT_LISTENER] About to call Subscription.create()..."
+      );
       newSub = await Subscription.create(subscriptionData);
       console.log(
-        "✅ [SUBSCRIPTION_UPSERT_LISTENER] Subscription.create() succeeded"
+        "✅ [SUBSCRIPTION_UPSERT_LISTENER] Subscription.create() succeeded",
+        {
+          subscriptionId: newSub._id.toString(),
+          profileId: newSub.profileId.toString(),
+          subscriptionYear: newSub.subscriptionYear,
+        }
       );
     } catch (createError) {
       console.error(
@@ -289,9 +333,13 @@ async function handleSubscriptionUpsertRequested(payload, context) {
           stack: createError.stack,
           name: createError.name,
           code: createError.code,
-          subscriptionData: JSON.stringify(subscriptionData, null, 2),
+          subscriptionData: safeSerialize(subscriptionData),
           validationErrors: createError.errors,
         }
+      );
+      // Log to stderr for better visibility
+      process.stderr.write(
+        `[SUBSCRIPTION CREATE ERROR] ${createError.message}\n${createError.stack}\n`
       );
       throw createError;
     }
@@ -304,6 +352,37 @@ async function handleSubscriptionUpsertRequested(payload, context) {
         subscriptionYear,
       }
     );
+
+    // Create/update PORTAL user in subscription-service for population (AFTER subscription is created)
+    // (PORTAL users don't have separate events, so we sync them here)
+    if (userId != null && userId !== "" && tenantId) {
+      try {
+        await User.findOneAndUpdate(
+          { tenantId, userId },
+          {
+            $set: {
+              userId,
+              userEmail: userEmail || null,
+              userFullName: null, // Will be populated from user events for CRM users
+              tenantId,
+            },
+          },
+          {
+            upsert: true,
+            new: true,
+            setDefaultsOnInsert: true,
+          }
+        );
+        console.log(
+          `✅ User synced in subscription-service for subscription: ${userId} (${userEmail})`
+        );
+      } catch (userError) {
+        console.error(
+          `⚠️ Failed to sync user in subscription-service: ${userError.message}`
+        );
+        // Don't fail subscription creation if user sync fails - subscription is already created
+      }
+    }
 
     // Publish event so profile-service can update Profile.currentSubscriptionId
     console.log(

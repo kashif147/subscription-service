@@ -22,6 +22,11 @@ const SubscriptionSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    userId: {
+      type: String,
+      default: null,
+      index: true,
+    }, // User ID (String) to link subscription to user for population
     applicationId: { type: String, default: null }, // need to decide if i want to keep it null for yearend renewal?
 
     subscriptionYear: { type: Number, required: true, index: true }, // NEW: yearly version of a subscription
@@ -83,17 +88,17 @@ const SubscriptionSchema = new mongoose.Schema(
     },
 
     meta: {
-      createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "users" },
-      updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "users" },
+      createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+      updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     },
     deleted: { type: Boolean, default: false },
     // isActive: { type: Boolean, default: true },
   },
-  { timestamps: true }
+  { timestamps: true, collection: "subscription" }
 );
 // Very important for performance:
 SubscriptionSchema.index(
   { tenantId: 1, profileId: 1, isCurrent: 1 },
   { unique: false }
 );
-module.exports = mongoose.model("subscriptionDetails", SubscriptionSchema);
+module.exports = mongoose.model("subscription", SubscriptionSchema);
