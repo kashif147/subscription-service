@@ -385,7 +385,19 @@ async function handleSubscriptionUpsertRequested(payload, context) {
     }
 
     // Publish event so profile-service can update Profile.currentSubscriptionId
-    await publisher.publish(
+    console.log(
+      "📤 [SUBSCRIPTION_UPSERT_LISTENER] Publishing subscription current updated event:",
+      {
+        eventType: MEMBERSHIP_EVENTS.SUBSCRIPTION_CURRENT_UPDATED,
+        subscriptionId: newSub._id.toString(),
+        profileId: profileIdObjectId.toString(),
+        tenantId,
+        correlationId: payload.correlationId,
+        exchange: "membership.events",
+      }
+    );
+
+    const publishResult = await publisher.publish(
       MEMBERSHIP_EVENTS.SUBSCRIPTION_CURRENT_UPDATED,
       {
         subscriptionId: newSub._id.toString(),
@@ -400,9 +412,25 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       }
     );
 
+    if (publishResult.success) {
     console.log(
-      "✅ [SUBSCRIPTION_UPSERT_LISTENER] Subscription current updated event published"
-    );
+        "✅ [SUBSCRIPTION_UPSERT_LISTENER] Subscription current updated event published successfully:",
+        {
+          eventId: publishResult.eventId,
+          subscriptionId: newSub._id.toString(),
+          profileId: profileIdObjectId.toString(),
+        }
+      );
+    } else {
+      console.error(
+        "❌ [SUBSCRIPTION_UPSERT_LISTENER] Failed to publish subscription current updated event:",
+        {
+          error: publishResult.error,
+          subscriptionId: newSub._id.toString(),
+          profileId: profileIdObjectId.toString(),
+        }
+      );
+    }
   } catch (error) {
     // Enhanced error logging with multiple console methods to ensure visibility
     const errorDetails = {

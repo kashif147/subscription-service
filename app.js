@@ -74,7 +74,7 @@ const {
 
 var app = express();
 
-// Disable ETag generation to prevent 304 responses
+// Disable Express automatic ETag generation (304 responses)
 app.set("etag", false);
 
 app.use(responseMiddleware);
@@ -124,9 +124,9 @@ app.use(express.json({ limit: "200mb" }));
 app.use(loggerMiddleware);
 
 // CORS middleware with enhanced configuration
-app.use(handlePreflight);
-app.use(corsMiddleware);
-app.use(corsErrorHandler);
+// app.use(handlePreflight);
+// app.use(corsMiddleware);
+// app.use(corsErrorHandler);
 
 app.use(
   session({
@@ -153,6 +153,10 @@ app.use(
 
 app.get("/", (req, res) => {
   res.render("index", { title: "Subscription Service" });
+});
+
+app.get("/health", (req, res) => {
+  res.status(200).json({ status: "UP" });
 });
 
 app.use("/api/v1", require("./routes/index"));
