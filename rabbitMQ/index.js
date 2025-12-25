@@ -76,6 +76,8 @@ async function initEventSystem() {
 		url: url,
 		logger: rabbitMQLogger,
 		prefetch: 10,
+		connectionName: "subscription-service",
+		serviceName: "subscription-service",
 	});
 }
 
