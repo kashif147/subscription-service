@@ -334,7 +334,7 @@ async function handleSubscriptionUpsertRequested(payload, context) {
     );
 
     if (publishResult.success) {
-      console.log(
+    console.log(
         "✅ [SUBSCRIPTION_UPSERT_LISTENER] Subscription current updated event published successfully:",
         {
           eventId: publishResult.eventId,
