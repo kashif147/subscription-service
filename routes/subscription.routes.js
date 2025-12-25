@@ -2,7 +2,8 @@ const express = require("express");
 const router = express.Router();
 const { 
   getCurrentByProfile, 
-  getSubscriptions
+  getSubscriptions,
+  resignMembership
 } = require("../controllers/subscription.controller");
 const { authenticate } = require("../middlewares/auth.mw");
 
@@ -11,5 +12,8 @@ router.get("/profile/:profileId/current", getCurrentByProfile);
 
 // CRM-only endpoint: Get all subscriptions or single subscription by applicationId
 router.get("/", authenticate, getSubscriptions);
+
+// CRM-only endpoint: Resign/Cancel membership for a profile
+router.put("/resign/:profileId", authenticate, resignMembership);
 
 module.exports = router;
