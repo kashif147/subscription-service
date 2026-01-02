@@ -33,3 +33,4 @@ UserSchema.pre("save", function (next) {
 });
 
 module.exports = mongoose.model("User", UserSchema);
+
