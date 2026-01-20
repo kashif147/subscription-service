@@ -4,6 +4,7 @@ const {
   getCurrentByProfile,
   getSubscriptions,
   resignMembership,
+  undoResignMembership,
 } = require("../controllers/subscription.controller");
 const { ensureAuthenticated } = require("../middlewares/auth.mw");
 
@@ -15,5 +16,8 @@ router.get("/", ensureAuthenticated, getSubscriptions);
 
 // CRM-only endpoint: Resign/Cancel membership for a profile
 router.put("/resign/:profileId", ensureAuthenticated, resignMembership);
+
+// CRM-only endpoint: Undo resignation for a profile
+router.put("/undo-resign/:profileId", ensureAuthenticated, undoResignMembership);
 
 module.exports = router;

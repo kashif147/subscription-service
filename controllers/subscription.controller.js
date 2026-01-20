@@ -2,6 +2,8 @@ const mongoose = require("mongoose");
 const Subscription = require("../models/subscription.model");
 const User = require("../models/user.model");
 const { USER_TYPE, MEMBERSHIP_STATUS } = require("../constants/enums");
+const { publisher } = require("@projectShell/rabbitmq-middleware");
+const { MEMBERSHIP_EVENTS } = require("../rabbitMQ/events");
 
 // Get current subscription start date for a profile
 // GET /api/v1/subscriptions/profile/:profileId/current
@@ -220,6 +222,49 @@ async function resignMembership(req, res) {
 
     await currentSubscription.save();
 
+    // Publish event for user-service to update user role to NON-MEMBER
+    try {
+      const publishResult = await publisher.publish(
+        MEMBERSHIP_EVENTS.SUBSCRIPTION_RESIGNED,
+        {
+          subscriptionId: currentSubscription._id.toString(),
+          profileId: currentSubscription.profileId.toString(),
+          userId: currentSubscription.userId,
+        },
+        {
+          tenantId: currentSubscription.tenantId || req.tenantId,
+          exchange: "membership.events",
+          routingKey: MEMBERSHIP_EVENTS.SUBSCRIPTION_RESIGNED,
+          metadata: { service: "subscription-service", version: "1.0" },
+        }
+      );
+
+      if (publishResult.success) {
+        console.log(
+          "✅ Subscription resigned event published successfully:",
+          {
+            eventId: publishResult.eventId,
+            subscriptionId: currentSubscription._id.toString(),
+            profileId: currentSubscription.profileId.toString(),
+          }
+        );
+      } else {
+        console.error(
+          "❌ Failed to publish subscription resigned event:",
+          {
+            error: publishResult.error,
+            subscriptionId: currentSubscription._id.toString(),
+          }
+        );
+      }
+    } catch (error) {
+      console.error(
+        "❌ Error publishing subscription resigned event:",
+        error.message
+      );
+      // Don't fail the request if event publishing fails
+    }
+
     return res.success({
       message: "Membership resigned successfully",
       data: {
@@ -236,8 +281,151 @@ async function resignMembership(req, res) {
   }
 }
 
+/**
+ * Undo resignation for a profile
+ * PUT /api/v1/subscriptions/undo-resign/:profileId
+ * CRM users only
+ */
+async function undoResignMembership(req, res) {
+  try {
+    // Check if user is CRM
+    if (!req.user || req.user.userType !== USER_TYPE.CRM) {
+      return res.status(403).json({
+        status: "fail",
+        data: "Access denied. CRM users only.",
+      });
+    }
+
+    const { profileId } = req.params;
+
+    // Validate profileId
+    if (!profileId || !mongoose.Types.ObjectId.isValid(profileId)) {
+      return res.fail("Invalid profileId");
+    }
+
+    // Find the resigned subscription for this profile
+    const resignedSubscription = await Subscription.findOne({
+      profileId: new mongoose.Types.ObjectId(profileId),
+      subscriptionStatus: MEMBERSHIP_STATUS.RESIGNED,
+      deleted: { $ne: true },
+      resignation: { $exists: true, $ne: null },
+    }).sort({ updatedAt: -1 }); // Get the most recently resigned subscription
+
+    if (!resignedSubscription) {
+      return res.status(404).json({
+        status: "fail",
+        data: "No resigned subscription found for this profile",
+      });
+    }
+
+    // Get CRM user ObjectId for meta.updatedBy
+    let updatedByObjectId = null;
+    if (req.userId && req.tenantId) {
+      try {
+        const crmUser = await User.findOne({
+          userId: req.userId,
+          tenantId: req.tenantId,
+        }).lean();
+
+        if (crmUser && crmUser._id) {
+          updatedByObjectId = crmUser._id;
+        }
+      } catch (error) {
+        console.warn(
+          `Warning: Could not find CRM user for userId ${req.userId}, continuing without updatedBy`
+        );
+      }
+    }
+
+    // Set any existing current subscriptions to false (to ensure only one is current)
+    await Subscription.updateMany(
+      {
+        profileId: new mongoose.Types.ObjectId(profileId),
+        isCurrent: true,
+        deleted: { $ne: true },
+        _id: { $ne: resignedSubscription._id },
+      },
+      {
+        $set: { isCurrent: false },
+      }
+    );
+
+    // Clear resignation data and reactivate the subscription
+    resignedSubscription.resignation = undefined;
+    resignedSubscription.isCurrent = true;
+    resignedSubscription.subscriptionStatus = MEMBERSHIP_STATUS.ACTIVE;
+
+    // Update meta.updatedBy if we have the CRM user ObjectId
+    if (updatedByObjectId) {
+      if (!resignedSubscription.meta) {
+        resignedSubscription.meta = {};
+      }
+      resignedSubscription.meta.updatedBy = updatedByObjectId;
+    }
+
+    await resignedSubscription.save();
+
+    // Publish event for user-service to update user role back to MEMBER
+    try {
+      const publishResult = await publisher.publish(
+        MEMBERSHIP_EVENTS.SUBSCRIPTION_RESIGNATION_UNDONE,
+        {
+          subscriptionId: resignedSubscription._id.toString(),
+          profileId: resignedSubscription.profileId.toString(),
+          userId: resignedSubscription.userId,
+        },
+        {
+          tenantId: resignedSubscription.tenantId || req.tenantId,
+          exchange: "membership.events",
+          routingKey: MEMBERSHIP_EVENTS.SUBSCRIPTION_RESIGNATION_UNDONE,
+          metadata: { service: "subscription-service", version: "1.0" },
+        }
+      );
+
+      if (publishResult.success) {
+        console.log(
+          "✅ Subscription resignation undone event published successfully:",
+          {
+            eventId: publishResult.eventId,
+            subscriptionId: resignedSubscription._id.toString(),
+            profileId: resignedSubscription.profileId.toString(),
+          }
+        );
+      } else {
+        console.error(
+          "❌ Failed to publish subscription resignation undone event:",
+          {
+            error: publishResult.error,
+            subscriptionId: resignedSubscription._id.toString(),
+          }
+        );
+      }
+    } catch (error) {
+      console.error(
+        "❌ Error publishing subscription resignation undone event:",
+        error.message
+      );
+      // Don't fail the request if event publishing fails
+    }
+
+    return res.success({
+      message: "Resignation undone successfully",
+      data: {
+        subscriptionId: resignedSubscription._id,
+        profileId: resignedSubscription.profileId,
+        subscriptionStatus: resignedSubscription.subscriptionStatus,
+        isCurrent: resignedSubscription.isCurrent,
+      },
+    });
+  } catch (error) {
+    console.error("Error undoing resignation:", error.message);
+    return res.serverError(error);
+  }
+}
+
 module.exports = {
   getCurrentByProfile,
   getSubscriptions,
   resignMembership,
+  undoResignMembership,
 };
