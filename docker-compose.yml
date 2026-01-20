@@ -4,6 +4,11 @@ services:
   subscription-service:
     container_name: subscription-service
     build: .
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     env_file:
       - /home/deploy/config/.env.common
       - .env.staging

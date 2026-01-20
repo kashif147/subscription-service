@@ -1,4 +1,9 @@
 module.exports = (req, res, next) => {
+  // Skip logging for health check endpoints
+  if (req.path === "/health" || req.path.startsWith("/health/")) {
+    return next();
+  }
+
   console.log(`${req.method} - ${req.url}`);
   switch (req.method) {
     case 'GET':
