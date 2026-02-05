@@ -266,6 +266,7 @@ async function getSubscriptions(req, res) {
     return res.success({
       count: enhancedSubscriptions.length,
       data: enhancedSubscriptions,
+      _aggregated: true, // Indicates full gateway aggregation (profile + account data included)
     });
   } catch (error) {
     console.error("❌ Error fetching subscriptions:", error.message);
