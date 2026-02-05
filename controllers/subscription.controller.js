@@ -4,6 +4,13 @@ const User = require("../models/user.model");
 const { USER_TYPE, MEMBERSHIP_STATUS } = require("../constants/enums");
 const { publisher } = require("@projectShell/rabbitmq-middleware");
 const { MEMBERSHIP_EVENTS } = require("../rabbitMQ/events");
+const {
+  fetchProfilesByIds,
+  fetchPaymentsByMemberIds,
+  calculateFinancialDetails,
+  buildProfileMap,
+  buildPaymentMap,
+} = require("../helpers/serviceClient");
 
 // Get current subscription start date for a profile
 // GET /api/v1/subscriptions/profile/:profileId/current
@@ -42,9 +49,14 @@ async function getSubscriptions(req, res) {
       });
     }
 
-    const { profileId, isCurrent } = req.query;
+    const { profileId, applicationId, isCurrent } = req.query;
 
     const query = { deleted: { $ne: true } };
+
+    // Restrict to CRM user's tenant so profile-service and account-service return data for same tenant
+    if (req.tenantId) {
+      query.tenantId = req.tenantId;
+    }
 
     if (profileId) {
       if (!mongoose.Types.ObjectId.isValid(profileId)) {
@@ -53,82 +65,210 @@ async function getSubscriptions(req, res) {
       query.profileId = new mongoose.Types.ObjectId(profileId);
     }
 
+    if (applicationId && applicationId.trim()) {
+      query.applicationId = applicationId.trim();
+    }
+
     if (isCurrent === "true") {
       query.isCurrent = true;
     } else if (isCurrent === "false") {
       query.isCurrent = false;
     }
 
+    console.log("🔍 Step 1: Fetching subscriptions from DB...");
     const subscriptions = await Subscription.find(query)
       .sort({ createdAt: -1 })
       .lean();
 
-    // Populate portal user (subscription owner) and CRM user (who approved/updated) for each subscription
-    const subscriptionsWithUser = await Promise.all(
-      subscriptions.map(async (subscription) => {
-        const result = { ...subscription };
+    console.log(`✅ Found ${subscriptions.length} subscriptions`);
 
-        // Populate portal user - the user to whom the subscription belongs (portal user)
-        if (subscription.userId && subscription.tenantId) {
-          try {
-            const portalUser = await User.findOne({
-              tenantId: subscription.tenantId,
-              userId: subscription.userId,
-            }).lean();
+    // ============================================================
+    // GATEWAY AGGREGATION: Use profileId (and applicationId), NOT userId.
+    // userId can be null; profileId is required on subscription, so we always have it.
+    // ============================================================
 
-            // Return portal user details with userFullName, or null if user not found
-            result.user = portalUser
-              ? {
-                  userId: portalUser.userId,
-                  userEmail: portalUser.userEmail,
-                  userFullName: portalUser.userFullName || null,
-                }
-              : null;
-          } catch (error) {
-            console.error(
-              `Error fetching portal user for subscription ${subscription._id}:`,
-              error.message
-            );
-            result.user = null;
+    // Step 2: Extract unique profileIds for batch fetching (never use userId for this)
+    const profileIds = [
+      ...new Set(
+        subscriptions
+          .map((s) => (s.profileId ? s.profileId.toString() : null))
+          .filter(Boolean)
+      ),
+    ].map((id) => (mongoose.Types.ObjectId.isValid(id) ? id : null)).filter(Boolean);
+    console.log(`🔍 Step 2: Need to fetch ${profileIds.length} unique profiles (by profileId)`);
+
+    // Step 3: Fetch profiles by profileIds and portal users in PARALLEL
+    console.log("🔍 Step 3: Fetching profiles and payments in parallel...");
+
+    const [profiles, portalUsers] = await Promise.all([
+      // Fetch profiles from profile-service by profileIds (token/tenant forwarded)
+      fetchProfilesByIds(profileIds, req.tenantId, req),
+
+      // Portal user info (optional: only when userId is set; can be null)
+      Promise.all(
+        subscriptions.map(async (sub) => {
+          if (sub.userId && sub.tenantId) {
+            try {
+              const user = await User.findOne({
+                tenantId: sub.tenantId,
+                userId: sub.userId,
+              }).lean();
+              return user
+                ? {
+                    subscriptionId: sub._id.toString(),
+                    userId: user.userId,
+                    userEmail: user.userEmail,
+                    userFullName: user.userFullName || null,
+                  }
+                : null;
+            } catch (error) {
+              return null;
+            }
           }
-        } else {
-          result.user = null;
-        }
+          return null;
+        })
+      ),
+    ]);
 
-        // Populate CRM user - who approved/updated the subscription (from meta.updatedBy)
-        // Use LAST MODIFIED BY and LAST MODIFIED AT fields
+    // Step 4: Build lookup maps for fast access
+    console.log("🔍 Step 4: Building lookup maps...");
+    const profileMap = buildProfileMap(profiles);
+    const portalUserMap = new Map();
+    portalUsers.forEach(user => {
+      if (user) {
+        portalUserMap.set(user.subscriptionId, user);
+      }
+    });
+
+    // Step 5: Fetch payments (need membership numbers from profiles)
+    const membershipNumbers = profiles
+      .map(p => p.membershipNumber)
+      .filter(Boolean);
+    
+    console.log(`🔍 Step 5: Fetching payments for ${membershipNumbers.length} members...`);
+    const payments = await fetchPaymentsByMemberIds(membershipNumbers, req.tenantId, req);
+    const paymentMap = buildPaymentMap(payments);
+
+    // Step 6: Merge all data into enhanced subscriptions
+    console.log("🔍 Step 6: Merging all data...");
+    const enhancedSubscriptions = await Promise.all(
+      subscriptions.map(async (subscription) => {
+        const profile = profileMap.get(subscription.profileId.toString());
+        const portalUser = portalUserMap.get(subscription._id.toString());
+        const memberPayments = profile?.membershipNumber 
+          ? paymentMap.get(profile.membershipNumber) || []
+          : [];
+
+        // Calculate financial details
+        const financialDetails = calculateFinancialDetails(
+          memberPayments,
+          subscription.membershipCategory
+        );
+
+        // Fetch CRM user (last modified by)
+        let lastModifiedBy = null;
         if (subscription.meta?.updatedBy) {
           try {
-            const crmUser = await User.findById(
-              subscription.meta.updatedBy
-            ).lean();
-            // Return userFullName of CRM user, or null if user not found
-            result.lastModifiedBy = crmUser?.userFullName || null;
+            const crmUser = await User.findById(subscription.meta.updatedBy).lean();
+            lastModifiedBy = crmUser?.userFullName || null;
           } catch (error) {
-            console.error(
-              `Error fetching CRM user (updatedBy) for subscription ${subscription._id}:`,
-              error.message
-            );
-            result.lastModifiedBy = null;
+            // Silent fail
           }
-        } else {
-          result.lastModifiedBy = null;
         }
 
-        // Set LAST MODIFIED AT from updatedAt timestamp (or createdAt as fallback)
-        result.lastModifiedAt =
-          subscription.updatedAt || subscription.createdAt || null;
+        return {
+          // ========== SUBSCRIPTION FIELDS – every field always sent ==========
+          _id: subscription._id,
+          profileId: subscription.profileId ?? null,
+          userId: subscription.userId ?? null,
+          applicationId: subscription.applicationId ?? null,
+          tenantId: subscription.tenantId ?? null,
+          subscriptionYear: subscription.subscriptionYear ?? null,
+          isCurrent: subscription.isCurrent ?? false,
+          subscriptionStatus: subscription.subscriptionStatus ?? null,
+          startDate: subscription.startDate ?? null,
+          endDate: subscription.endDate ?? null,
+          membershipCategory: subscription.membershipCategory ?? null,
+          paymentType: subscription.paymentType ?? null,
+          payrollNo: subscription.payrollNo ?? null,
+          paymentFrequency: subscription.paymentFrequency ?? null,
+          membershipMovement: subscription.membershipMovement ?? null,
+          rolloverDate: subscription.rolloverDate ?? null,
+          cancellation: subscription.cancellation ?? null,
+          resignation: subscription.resignation ?? null,
+          reminders: subscription.reminders ?? null,
+          yearend: subscription.yearend ?? null,
+          createdAt: subscription.createdAt ?? null,
+          updatedAt: subscription.updatedAt ?? null,
+          deleted: subscription.deleted ?? false,
 
-        return result;
+          // User info – every field always sent (userId can be null on subscription)
+          user: {
+            userId: portalUser?.userId ?? null,
+            userEmail: portalUser?.userEmail ?? null,
+            userFullName: portalUser?.userFullName ?? null,
+          },
+          lastModifiedBy: lastModifiedBy ?? null,
+          lastModifiedAt: subscription.updatedAt || subscription.createdAt || null,
+
+          // ========== PERSONAL DETAILS (FROM PROFILE-SERVICE) – every field always sent ==========
+          personalDetails: {
+            membershipNo: profile?.membershipNumber ?? null,
+            mobileNo: profile?.contactInfo?.mobileNumber ?? null,
+            dateOfBirth: profile?.personalInfo?.dateOfBirth ?? null,
+            gender: profile?.personalInfo?.gender ?? null,
+            fullAddress: profile?.contactInfo?.fullAddress ?? null,
+            notAtThisAddress: profile?.contactInfo?.nATA ?? false,
+          },
+
+          // ========== PROFESSIONAL DETAILS (FROM PROFILE-SERVICE) – every field always sent ==========
+          professionalDetails: {
+            workLocation: profile?.professionalDetails?.workLocation ?? null,
+            branch: profile?.professionalDetails?.branch ?? null,
+            region: profile?.professionalDetails?.region ?? null,
+            grade: profile?.professionalDetails?.grade ?? null,
+            primarySection: profile?.professionalDetails?.primarySection ?? null,
+            secondarySection: profile?.professionalDetails?.secondarySection ?? null,
+            nmbiNumber: profile?.professionalDetails?.nmbiNumber ?? null,
+            retiredDate: profile?.professionalDetails?.retiredDate ?? null,
+            pensionNumber: profile?.professionalDetails?.pensionNo ?? null,
+            speciality: profile?.professionalDetails?.speciality ?? null,
+          },
+
+          // ========== PREFERENCES & CONSENTS (FROM PROFILE-SERVICE) – every field always sent ==========
+          preferences: {
+            consent: profile?.preferences?.consent ?? false,
+            incomeProtection: profile?.cornMarket?.incomeProtectionScheme ?? false,
+            inmoRewards: profile?.cornMarket?.inmoRewards ?? false,
+            partnerConsent: profile?.cornMarket?.partnerConsent ?? false,
+          },
+
+          // ========== ADDITIONAL INFO (FROM PROFILE-SERVICE) – every field always sent ==========
+          additionalInfo: {
+            anotherUnionMember: profile?.additionalInformation?.otherIrishTradeUnion ?? false,
+            otherUnionName: profile?.additionalInformation?.otherIrishTradeUnionName ?? null,
+            submissionDate: profile?.submissionDate ?? null,
+          },
+
+          // ========== FINANCIAL DETAILS (FROM ACCOUNT-SERVICE) – every field always sent ==========
+          financialDetails: {
+            lastPaymentAmount: financialDetails.lastPaymentAmount ?? null,
+            lastPaymentDate: financialDetails.lastPaymentDate ?? null,
+            membershipFee: financialDetails.membershipFee ?? null,
+            outstandingBalance: financialDetails.outstandingBalance ?? null,
+          },
+        };
       })
     );
 
+    console.log(`✅ Successfully enhanced ${enhancedSubscriptions.length} subscriptions`);
+
     return res.success({
-      count: subscriptionsWithUser.length,
-      data: subscriptionsWithUser,
+      count: enhancedSubscriptions.length,
+      data: enhancedSubscriptions,
     });
   } catch (error) {
-    console.error("Error fetching subscriptions:", error.message);
+    console.error("❌ Error fetching subscriptions:", error.message);
     return res.serverError(error);
   }
 }
