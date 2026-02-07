@@ -1,12 +1,13 @@
 const axios = require('axios');
 
 const PROFILE_SERVICE_URL = process.env.PROFILE_SERVICE_URL || 'http://projectshell-vm.northeurope.cloudapp.azure.com/profile-service';
-const ACCOUNT_SERVICE_URL = process.env.ACCOUNT_SERVICE_URL || 'http://projectshell-vm.northeurope.cloudapp.azure.com/accounts-service';
+const ACCOUNT_SERVICE_URL = process.env.ACCOUNT_SERVICE_URL || 'http://projectshell-vm.northeurope.cloudapp.azure.com/account-service';
 
 function buildServiceHeaders(req, tenantId) {
   const headers = {
     'Content-Type': 'application/json',
-    'x-tenant-id': tenantId || 'default',
+    'x-tenant-id': tenantId || req?.headers?.['x-tenant-id'] || 'default',
+    'x-internal-request': 'true', 
   };
 
   if (req.headers['x-jwt-verified']) {
