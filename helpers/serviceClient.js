@@ -54,17 +54,16 @@ async function fetchProfilesByIds(profileIds, tenantId, req) {
 
   try {
     console.log(`[Gateway Aggregation] Calling profile-service for ${profileIds.length} profiles (by profileId)...`);
-    
     const headers = buildServiceHeaders(req, tenantId);
-    
-    const response = await axios.post(
+    const ids = profileIds.map((id) => id.toString());
+
+    // Use GET with query params so gateways that convert POST→GET or strip body still work
+    const response = await axios.get(
       `${PROFILE_SERVICE_URL}/api/profile/batch`,
       {
-        profileIds: profileIds.map(id => id.toString()),
-      },
-      {
+        params: { profileIds: ids },
         headers,
-        timeout: 5000, 
+        timeout: 5000,
       }
     );
 

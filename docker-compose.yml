@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   subscription-service:
     container_name: subscription-service
