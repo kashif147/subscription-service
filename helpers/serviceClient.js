@@ -53,33 +53,43 @@ async function fetchProfilesByIds(profileIds, tenantId, req) {
   }
 
   try {
-    console.log(`[Gateway Aggregation] Calling profile-service for ${profileIds.length} profiles (by profileId)...`);
-    const headers = buildServiceHeaders(req, tenantId);
     const ids = profileIds.map((id) => id.toString());
+    const profileIdsQuery = ids.join(",");
+    const batchUrl = `${PROFILE_SERVICE_URL}/api/profile/batch`;
+    const fullUrl = `${batchUrl}?profileIds=${encodeURIComponent(profileIdsQuery)}`;
 
-    // Use GET with query params so gateways that convert POST→GET or strip body still work
-    const response = await axios.get(
-      `${PROFILE_SERVICE_URL}/api/profile/batch`,
-      {
-        params: { profileIds: ids },
+    console.log(`[Gateway Aggregation] === Profile batch request ===`);
+    console.log(`[Gateway Aggregation] PROFILE_SERVICE_URL: ${PROFILE_SERVICE_URL}`);
+    console.log(`[Gateway Aggregation] Request URL: ${fullUrl}`);
+    console.log(`[Gateway Aggregation] profileIds count: ${ids.length}, tenantId: ${tenantId || req?.headers?.['x-tenant-id'] || 'none'}`);
+    console.log(`[Gateway Aggregation] profileIds (first 3): ${ids.slice(0, 3).join(', ')}${ids.length > 3 ? '...' : ''}`);
+
+    const headers = buildServiceHeaders(req, tenantId);
+    const response = await axios.get(batchUrl, {
+        params: { profileIds: profileIdsQuery },
         headers,
         timeout: 5000,
       }
     );
 
-    console.log(`[Gateway Aggregation] Profile-service returned ${response.data?.data?.length || 0} profiles`);
-    return response.data.data || [];
+    const profileList = response.data?.data;
+    const count = Array.isArray(profileList) ? profileList.length : 0;
+    console.log(`[Gateway Aggregation] Profile-service response: status=${response.status}, data.count=${count}`);
+    if (count > 0 && profileList[0]) {
+      console.log(`[Gateway Aggregation] First profile _id: ${profileList[0]._id}, membershipNumber: ${profileList[0].membershipNumber || 'n/a'}`);
+    }
+    return profileList || [];
   } catch (error) {
     const status = error.response?.status;
     const message = error.response?.data?.message || error.message;
-    console.error(
-      '[Gateway Aggregation] Error fetching profiles from profile-service:',
-      status ? `HTTP ${status} - ${message}` : message
-    );
+    const code = error.code || '';
+    console.error(`[Gateway Aggregation] Profile-service ERROR: ${code} ${status ? `HTTP ${status}` : ''} - ${message}`);
     if (error.response?.data) {
-      console.error('[Gateway Aggregation] Profile-service response:', JSON.stringify(error.response.data));
+      console.error('[Gateway Aggregation] Profile-service response body:', JSON.stringify(error.response.data));
     }
-    // Return empty array on error (graceful degradation)
+    if (error.code) {
+      console.error('[Gateway Aggregation] Error code:', error.code, error.message);
+    }
     return [];
   }
 }
@@ -91,37 +101,40 @@ async function fetchPaymentsByMemberIds(membershipNumbers, tenantId, req) {
   }
 
   try {
-    console.log(`[Gateway Aggregation] Calling account-service for ${membershipNumbers.length} members...`);
-    
-    // Build headers with user's authentication token (gateway aggregation)
-    const headers = buildServiceHeaders(req, tenantId);
-    
-    const response = await axios.post(
-      `${ACCOUNT_SERVICE_URL}/api/payments/batch`,
-      {
-        memberIds: membershipNumbers,
-        status: 'succeeded',
-        purpose: 'subscriptionFee',
-      },
-      {
-        headers,
-        timeout: 5000,
-      }
-    );
+    const payload = {
+      memberIds: membershipNumbers,
+      status: 'succeeded',
+      purpose: 'subscriptionFee',
+    };
+    const postUrl = `${ACCOUNT_SERVICE_URL}/api/payments/batch`;
 
-    console.log(`[Gateway Aggregation] Account-service returned ${response.data?.data?.length || 0} payments`);
-    return response.data.data || [];
+    console.log(`[Gateway Aggregation] === Account (payments) batch request ===`);
+    console.log(`[Gateway Aggregation] ACCOUNT_SERVICE_URL: ${ACCOUNT_SERVICE_URL}`);
+    console.log(`[Gateway Aggregation] Request: POST ${postUrl}`);
+    console.log(`[Gateway Aggregation] memberIds count: ${membershipNumbers.length}, tenantId: ${tenantId || req?.headers?.['x-tenant-id'] || 'none'}`);
+    console.log(`[Gateway Aggregation] memberIds (first 3): ${membershipNumbers.slice(0, 3).join(', ')}${membershipNumbers.length > 3 ? '...' : ''}`);
+
+    const headers = buildServiceHeaders(req, tenantId);
+    const response = await axios.post(postUrl, payload, {
+      headers,
+      timeout: 5000,
+    });
+
+    const paymentList = response.data?.data;
+    const count = Array.isArray(paymentList) ? paymentList.length : (typeof response.data?.data === 'number' ? response.data.data : 0);
+    console.log(`[Gateway Aggregation] Account-service response: status=${response.status}, payments count: ${Array.isArray(paymentList) ? paymentList.length : 'n/a'}`);
+    return paymentList || [];
   } catch (error) {
     const status = error.response?.status;
     const message = error.response?.data?.message || error.message;
-    console.error(
-      '[Gateway Aggregation] Error fetching payments from account-service:',
-      status ? `HTTP ${status} - ${message}` : message
-    );
+    const code = error.code || '';
+    console.error(`[Gateway Aggregation] Account-service ERROR: ${code} ${status ? `HTTP ${status}` : ''} - ${message}`);
     if (error.response?.data) {
-      console.error('[Gateway Aggregation] Account-service response:', JSON.stringify(error.response.data));
+      console.error('[Gateway Aggregation] Account-service response body:', JSON.stringify(error.response.data));
     }
-    // Return empty array on error (graceful degradation)
+    if (error.code) {
+      console.error('[Gateway Aggregation] Error code:', error.code, error.message);
+    }
     return [];
   }
 }

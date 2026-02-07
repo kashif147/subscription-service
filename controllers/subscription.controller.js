@@ -140,14 +140,22 @@ async function getSubscriptions(req, res) {
       }
     });
 
+    const matchedCount = subscriptions.filter(s => profileMap.has(s.profileId?.toString())).length;
+    console.log(`[Gateway Aggregation] Profile map: ${profileMap.size} profiles, ${matchedCount}/${subscriptions.length} subscriptions have a matching profile`);
+    if (matchedCount < subscriptions.length && profileMap.size > 0) {
+      const missing = subscriptions.filter(s => !profileMap.has(s.profileId?.toString())).map(s => s.profileId?.toString());
+      console.log(`[Gateway Aggregation] Subscriptions with no profile match (profileIds): ${missing.slice(0, 5).join(', ')}${missing.length > 5 ? '...' : ''}`);
+    }
+
     // Step 5: Fetch payments (need membership numbers from profiles)
     const membershipNumbers = profiles
       .map(p => p.membershipNumber)
       .filter(Boolean);
     
-    console.log(`🔍 Step 5: Fetching payments for ${membershipNumbers.length} members...`);
+    console.log(`🔍 Step 5: Fetching payments for ${membershipNumbers.length} members (from ${profiles.length} profiles)...`);
     const payments = await fetchPaymentsByMemberIds(membershipNumbers, req.tenantId, req);
     const paymentMap = buildPaymentMap(payments);
+    console.log(`[Gateway Aggregation] Payment map: ${paymentMap.size} members have payments, total payment records: ${payments.length}`);
 
     // Step 6: Merge all data into enhanced subscriptions
     console.log("🔍 Step 6: Merging all data...");
@@ -261,6 +269,8 @@ async function getSubscriptions(req, res) {
       })
     );
 
+    const withProfile = enhancedSubscriptions.filter(s => s.personalDetails?.membershipNo != null || s.personalDetails?.mobileNo != null).length;
+    console.log(`[Gateway Aggregation] Done: ${enhancedSubscriptions.length} subscriptions enhanced, ${withProfile} with profile data populated`);
     console.log(`✅ Successfully enhanced ${enhancedSubscriptions.length} subscriptions`);
 
     return res.success({
