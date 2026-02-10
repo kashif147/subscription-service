@@ -214,7 +214,7 @@ async function getSubscriptions(req, res) {
           // ========== SUBSCRIPTION FIELDS – every field always sent ==========
           _id: subscription._id,
           profileId: subscription.profileId ?? null,
-          userId: resolvedUserId,
+          // userId: resolvedUserId,
           applicationId: subscription.applicationId ?? null,
           tenantId: subscription.tenantId ?? null,
           subscriptionYear: subscription.subscriptionYear ?? null,
