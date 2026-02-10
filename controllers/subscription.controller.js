@@ -173,10 +173,20 @@ async function getSubscriptions(req, res) {
           subscription.membershipCategory
         );
 
+        // Resolve actual user email from profile (preferredEmail can be "personal"/"work" – use personalEmail/workEmail)
+        const getActualEmailFromProfile = (contactInfo) => {
+          if (!contactInfo) return null;
+          const pref = (contactInfo.preferredEmail || '').toString().toLowerCase();
+          if ((pref === 'personal' || pref === 'person') && contactInfo.personalEmail) return contactInfo.personalEmail;
+          if (pref === 'work' && contactInfo.workEmail) return contactInfo.workEmail;
+          if (contactInfo.preferredEmail && String(contactInfo.preferredEmail).includes('@')) return contactInfo.preferredEmail;
+          return contactInfo.personalEmail || contactInfo.workEmail || null;
+        };
+
         // User info: prefer portal user (when subscription has userId); else derive from profile (CRM-created)
         const userFromProfile = (function () {
           if (!profile) return null;
-          const email = profile.contactInfo?.preferredEmail || profile.contactInfo?.personalEmail || profile.contactInfo?.workEmail || null;
+          const email = getActualEmailFromProfile(profile.contactInfo);
           const fullName = [profile.personalInfo?.forename, profile.personalInfo?.surname].filter(Boolean).join(' ').trim() || null;
           const uid = profile.userId != null ? (profile.userId.toString ? profile.userId.toString() : profile.userId) : null;
           if (uid || email || fullName) {
@@ -185,6 +195,9 @@ async function getSubscriptions(req, res) {
           return null;
         })();
         const resolvedUser = portalUser || userFromProfile || { userId: null, userEmail: null, userFullName: null };
+
+        // Top-level userId: use actual user id when we have it (profile or portal), so we don't send null unnecessarily
+        const resolvedUserId = resolvedUser.userId ?? subscription.userId ?? null;
 
         // Fetch CRM user (last modified by)
         let lastModifiedBy = null;
@@ -201,7 +214,7 @@ async function getSubscriptions(req, res) {
           // ========== SUBSCRIPTION FIELDS – every field always sent ==========
           _id: subscription._id,
           profileId: subscription.profileId ?? null,
-          userId: subscription.userId ?? null,
+          ...(resolvedUserId != null ? { userId: resolvedUserId } : {}),
           applicationId: subscription.applicationId ?? null,
           tenantId: subscription.tenantId ?? null,
           subscriptionYear: subscription.subscriptionYear ?? null,
@@ -223,9 +236,8 @@ async function getSubscriptions(req, res) {
           updatedAt: subscription.updatedAt ?? null,
           deleted: subscription.deleted ?? false,
 
-          // User info – from portal user when subscription.userId set; else from profile (CRM-created)
+          // User info – actual email and full name only (no userId in user object)
           user: {
-            userId: resolvedUser.userId ?? null,
             userEmail: resolvedUser.userEmail ?? null,
             userFullName: resolvedUser.userFullName ?? null,
           },
