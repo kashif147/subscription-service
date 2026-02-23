@@ -47,6 +47,7 @@ async function handleSubscriptionUpsertRequested(payload, context) {
     const {
       profileId,
       applicationId = null,
+      memberId = null,
       membershipCategory = null,
       dateJoined,
       paymentType = null,
@@ -318,11 +319,30 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       }
     );
 
+    // Include applicationId and memberId for account-service invoice creation and credit claiming
+    const subscriptionAppId = newSub.applicationId || applicationId;
+    const subscriptionMemberId = memberId || null;
+    const startDateISO =
+      startDate instanceof Date
+        ? startDate.toISOString().split("T")[0]
+        : new Date(startDate).toISOString().split("T")[0];
+
     const publishResult = await publisher.publish(
       MEMBERSHIP_EVENTS.SUBSCRIPTION_CURRENT_UPDATED,
       {
         subscriptionId: newSub._id.toString(),
         profileId: profileIdObjectId.toString(),
+        applicationId: subscriptionAppId,
+        memberId: subscriptionMemberId,
+        tenantId: tenantId || undefined,
+        effective: {
+          subscriptionDetails: {
+            membershipCategory: membershipCategory || null,
+            dateJoined: startDateISO,
+          },
+          professionalDetails: { membershipCategory: membershipCategory || null },
+        },
+        subscriptionAttributes: { startDate: startDateISO },
       },
       {
         tenantId,
