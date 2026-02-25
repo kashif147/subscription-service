@@ -26,10 +26,10 @@ exports.PREFERRED_EMAIL = {
 
 // Payment Type Enums
 exports.PAYMENT_TYPE = {
-  PAYROLL_DEDUCTION: "Payroll Deduction",
+  PAYROLL_DEDUCTION: "Salary Deduction",
   DIRECT_DEBIT: "Direct Debit",
-  CARD_PAYMENT: "Card Payment",
-  SBO_PAYMENT: "Standing Bank Order",
+  CARD_PAYMENT: "Credit Card",
+  SBO_PAYMENT: "Standing Bankers Order",
 };
 
 // Payment Frequency Enums
