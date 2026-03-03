@@ -334,6 +334,7 @@ async function handleSubscriptionUpsertRequested(payload, context) {
         profileId: profileIdObjectId.toString(),
         applicationId: subscriptionAppId,
         memberId: subscriptionMemberId,
+        userId: userId || null,
         tenantId: tenantId || undefined,
         effective: {
           subscriptionDetails: {
