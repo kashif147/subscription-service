@@ -47,10 +47,12 @@ function buildServiceHeaders(req, tenantId) {
  * Fetch profiles by profile IDs (not user IDs - userId can be null on subscription).
  * Used by gateway aggregation so CRM subscription API returns profile + payment data.
  */
-async function fetchProfilesByIds(profileIds, tenantId, req) {
+async function fetchProfilesByIds(profileIds, tenantId, req, options = {}) {
   if (!profileIds || profileIds.length === 0) {
     return [];
   }
+
+  const { relaxTenant = false } = options;
 
   try {
     const ids = profileIds.map((id) => id.toString());
@@ -61,12 +63,16 @@ async function fetchProfilesByIds(profileIds, tenantId, req) {
     console.log(`[Gateway Aggregation] === Profile batch request ===`);
     console.log(`[Gateway Aggregation] PROFILE_SERVICE_URL: ${PROFILE_SERVICE_URL}`);
     console.log(`[Gateway Aggregation] Request URL: ${fullUrl}`);
-    console.log(`[Gateway Aggregation] profileIds count: ${ids.length}, tenantId: ${tenantId || req?.headers?.['x-tenant-id'] || 'none'}`);
+    console.log(`[Gateway Aggregation] profileIds count: ${ids.length}, tenantId: ${tenantId || req?.headers?.['x-tenant-id'] || 'none'}, relaxTenant: ${relaxTenant}`);
     console.log(`[Gateway Aggregation] profileIds (first 3): ${ids.slice(0, 3).join(', ')}${ids.length > 3 ? '...' : ''}`);
 
     const headers = buildServiceHeaders(req, tenantId);
+    const params = { profileIds: profileIdsQuery };
+    if (relaxTenant) {
+      params.relaxTenant = "true";
+    }
     const response = await axios.get(batchUrl, {
-        params: { profileIds: profileIdsQuery },
+        params,
         headers,
         timeout: 5000,
       }

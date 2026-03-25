@@ -114,4 +114,21 @@ const ensureAuthenticated = (req, res, next) => {
   }
 };
 
-module.exports = { ensureAuthenticated };
+/**
+ * Allow either authenticated (JWT/gateway) OR internal service call (x-internal-request).
+ * Used for profile subscription endpoints called by profile-service, user-service, etc.
+ */
+const ensureAuthenticatedOrInternal = (req, res, next) => {
+  const isInternal =
+    req.headers["x-internal-request"] === "true" ||
+    req.headers["x-internal-request"] === "1";
+
+  if (isInternal) {
+    req.tenantId = req.headers["x-tenant-id"] || req.tenantId;
+    return next();
+  }
+
+  return ensureAuthenticated(req, res, next);
+};
+
+module.exports = { ensureAuthenticated, ensureAuthenticatedOrInternal };

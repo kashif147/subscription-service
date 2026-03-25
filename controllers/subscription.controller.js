@@ -11,30 +11,54 @@ const {
   buildProfileMap,
   buildPaymentMap,
 } = require("../helpers/serviceClient");
+const { buildDemotionEventPayload } = require("../helpers/demotionEventPayload");
 
-// Get current subscription start date for a profile
-// GET /api/v1/subscriptions/profile/:profileId/current
-async function getCurrentByProfile(req, res) {
+const MEMBERSHIP_CANCEL_GRACE_DAYS = 28;
+
+// Get subscription(s) for a profile. Auth required (CRM + Portal).
+// GET /api/v1/subscriptions/profile/:profileId/current - current subscription only
+// GET /api/v1/subscriptions/profile/:profileId - all subscriptions (or ?isCurrent=false)
+// GET /api/v1/subscriptions/profile/:profileId?isCurrent=true - current only
+async function getSubscriptionsByProfile(req, res) {
   const { profileId } = req.params;
+  const isCurrentFilter = req.query.isCurrent;
 
   if (!profileId || !mongoose.Types.ObjectId.isValid(profileId)) {
     return res.fail("Invalid profileId");
   }
 
   try {
-    const sub = await Subscription.findOne({
+    const query = {
       profileId: new mongoose.Types.ObjectId(profileId),
-      isCurrent: true,
       deleted: { $ne: true },
-    })
-      .select({ profileId: 1, startDate: 1, isCurrent: 1 })
+    };
+
+    if (req.tenantId) {
+      query.tenantId = req.tenantId;
+    }
+
+    const onlyCurrent = isCurrentFilter === "true";
+    if (onlyCurrent) {
+      query.isCurrent = true;
+      query.subscriptionStatus = MEMBERSHIP_STATUS.ACTIVE;
+    }
+
+    const subscriptions = await Subscription.find(query)
+      .sort({ startDate: -1 })
       .lean();
 
+    if (onlyCurrent) {
+      const sub = subscriptions[0] || null;
+      return res.success({
+        data: sub ? { startDate: sub.startDate } : null,
+      });
+    }
+
     return res.success({
-      data: sub ? { startDate: sub.startDate } : null,
+      data: subscriptions,
     });
   } catch (error) {
-    console.error("Error fetching current subscription:", error.message);
+    console.error("Error fetching subscriptions by profile:", error.message);
     return res.serverError(error);
   }
 }
@@ -398,14 +422,23 @@ async function resignMembership(req, res) {
 
     await currentSubscription.save();
 
-    // Publish event for user-service to update user role to NON-MEMBER
+    // Publish event for user-service to downgrade portal role to NON-MEMBER
     try {
+      const identity = await buildDemotionEventPayload({
+        profileId: currentSubscription.profileId,
+        subscriptionUserId: currentSubscription.userId,
+        tenantId: currentSubscription.tenantId || req.tenantId,
+        req,
+      });
       const publishResult = await publisher.publish(
         MEMBERSHIP_EVENTS.SUBSCRIPTION_RESIGNED,
         {
           subscriptionId: currentSubscription._id.toString(),
-          profileId: currentSubscription.profileId.toString(),
-          userId: currentSubscription.userId,
+          profileId: identity.profileId,
+          tenantId: identity.tenantId,
+          userId: identity.userId,
+          userEmail: identity.userEmail,
+          reason: "resigned",
         },
         {
           tenantId: currentSubscription.tenantId || req.tenantId,
@@ -599,9 +632,115 @@ async function undoResignMembership(req, res) {
   }
 }
 
+function endOfCancellationGracePeriod(dateCancelled) {
+  const d = new Date(dateCancelled);
+  if (isNaN(d.getTime())) return null;
+  const end = new Date(d.getTime());
+  end.setUTCDate(end.getUTCDate() + MEMBERSHIP_CANCEL_GRACE_DAYS);
+  return end;
+}
+
+/**
+ * Cancel membership (CRM): status Cancelled, 28-day grace; portal role demoted after grace via sweep event.
+ * PUT /api/v1/subscriptions/cancel/:profileId
+ */
+async function cancelMembership(req, res) {
+  try {
+    if (!req.user || req.user.userType !== USER_TYPE.CRM) {
+      return res.status(403).json({
+        status: "fail",
+        data: "Access denied. CRM users only.",
+      });
+    }
+
+    const { profileId } = req.params;
+    const { dateCancelled, reason } = req.body;
+
+    if (!profileId || !mongoose.Types.ObjectId.isValid(profileId)) {
+      return res.fail("Invalid profileId");
+    }
+    if (!dateCancelled) {
+      return res.fail("dateCancelled is required");
+    }
+    if (!reason || !String(reason).trim()) {
+      return res.fail("reason is required");
+    }
+
+    const currentSubscription = await Subscription.findOne({
+      profileId: new mongoose.Types.ObjectId(profileId),
+      isCurrent: true,
+      deleted: { $ne: true },
+    });
+
+    if (!currentSubscription) {
+      return res.status(404).json({
+        status: "fail",
+        data: "No active subscription found for this profile",
+      });
+    }
+
+    const cancelledAt = new Date(dateCancelled);
+    if (isNaN(cancelledAt.getTime())) {
+      return res.fail("Invalid dateCancelled format");
+    }
+
+    const gracePeriodEnd = endOfCancellationGracePeriod(cancelledAt);
+    if (!gracePeriodEnd) {
+      return res.fail("Could not compute grace period end");
+    }
+
+    let updatedByObjectId = null;
+    if (req.userId && req.tenantId) {
+      try {
+        const crmUser = await User.findOne({
+          userId: req.userId,
+          tenantId: req.tenantId,
+        }).lean();
+        if (crmUser?._id) updatedByObjectId = crmUser._id;
+      } catch (e) {
+        console.warn(
+          `Warning: Could not find CRM user for userId ${req.userId}`
+        );
+      }
+    }
+
+    currentSubscription.cancellation = {
+      dateCancelled: cancelledAt,
+      reason: String(reason).trim(),
+      gracePeriodEnd,
+      reinstated: false,
+      portalRoleDemotionPublishedAt: null,
+    };
+    currentSubscription.isCurrent = false;
+    currentSubscription.subscriptionStatus = MEMBERSHIP_STATUS.CANCELLED;
+
+    if (updatedByObjectId) {
+      if (!currentSubscription.meta) currentSubscription.meta = {};
+      currentSubscription.meta.updatedBy = updatedByObjectId;
+    }
+
+    await currentSubscription.save();
+
+    return res.success({
+      message: "Membership cancelled; portal role demotes after grace period",
+      data: {
+        subscriptionId: currentSubscription._id,
+        profileId: currentSubscription.profileId,
+        subscriptionStatus: currentSubscription.subscriptionStatus,
+        isCurrent: currentSubscription.isCurrent,
+        cancellation: currentSubscription.cancellation,
+      },
+    });
+  } catch (error) {
+    console.error("Error cancelling membership:", error.message);
+    return res.serverError(error);
+  }
+}
+
 module.exports = {
-  getCurrentByProfile,
+  getSubscriptionsByProfile,
   getSubscriptions,
   resignMembership,
   undoResignMembership,
+  cancelMembership,
 };

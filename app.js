@@ -91,6 +91,10 @@ if (process.env.RABBIT_URL) {
       return setupConsumers();
     })
     .then(() => {
+      const {
+        startCancellationGraceSweep,
+      } = require("./jobs/cancellationGraceSweep.js");
+      startCancellationGraceSweep();
       console.log(
         "✅ RabbitMQ fully initialized with middleware (subscription-service)"
       );
