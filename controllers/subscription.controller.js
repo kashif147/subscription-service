@@ -439,6 +439,7 @@ async function resignMembership(req, res) {
           userId: identity.userId,
           userEmail: identity.userEmail,
           reason: "resigned",
+          applicationId: currentSubscription.applicationId || null,
         },
         {
           tenantId: currentSubscription.tenantId || req.tenantId,
@@ -582,6 +583,8 @@ async function undoResignMembership(req, res) {
           subscriptionId: resignedSubscription._id.toString(),
           profileId: resignedSubscription.profileId.toString(),
           userId: resignedSubscription.userId,
+          tenantId: resignedSubscription.tenantId || req.tenantId,
+          applicationId: resignedSubscription.applicationId || null,
         },
         {
           tenantId: resignedSubscription.tenantId || req.tenantId,
@@ -720,6 +723,32 @@ async function cancelMembership(req, res) {
     }
 
     await currentSubscription.save();
+
+    try {
+      const publishResult = await publisher.publish(
+        MEMBERSHIP_EVENTS.SUBSCRIPTION_CANCELLED,
+        {
+          subscriptionId: currentSubscription._id.toString(),
+          profileId: currentSubscription.profileId.toString(),
+          tenantId: currentSubscription.tenantId || req.tenantId,
+          applicationId: currentSubscription.applicationId || null,
+        },
+        {
+          tenantId: currentSubscription.tenantId || req.tenantId,
+          exchange: "membership.events",
+          routingKey: MEMBERSHIP_EVENTS.SUBSCRIPTION_CANCELLED,
+          metadata: { service: "subscription-service", version: "1.0" },
+        }
+      );
+      if (!publishResult.success) {
+        console.error("❌ Failed to publish subscription cancelled event:", {
+          error: publishResult.error,
+          subscriptionId: currentSubscription._id.toString(),
+        });
+      }
+    } catch (e) {
+      console.error("❌ Error publishing subscription cancelled event:", e.message);
+    }
 
     return res.success({
       message: "Membership cancelled; portal role demotes after grace period",
