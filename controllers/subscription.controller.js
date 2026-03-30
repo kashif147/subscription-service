@@ -577,13 +577,20 @@ async function undoResignMembership(req, res) {
 
     // Publish event for user-service to update user role back to MEMBER
     try {
+      const identity = await buildDemotionEventPayload({
+        profileId: resignedSubscription.profileId,
+        subscriptionUserId: resignedSubscription.userId,
+        tenantId: resignedSubscription.tenantId || req.tenantId,
+        req,
+      });
       const publishResult = await publisher.publish(
         MEMBERSHIP_EVENTS.SUBSCRIPTION_RESIGNATION_UNDONE,
         {
           subscriptionId: resignedSubscription._id.toString(),
-          profileId: resignedSubscription.profileId.toString(),
-          userId: resignedSubscription.userId,
-          tenantId: resignedSubscription.tenantId || req.tenantId,
+          profileId: identity.profileId,
+          userId: identity.userId,
+          userEmail: identity.userEmail,
+          tenantId: identity.tenantId,
           applicationId: resignedSubscription.applicationId || null,
         },
         {
