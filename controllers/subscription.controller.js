@@ -773,10 +773,133 @@ async function cancelMembership(req, res) {
   }
 }
 
+/**
+ * Undo cancellation for a profile
+ * PUT /api/v1/subscriptions/undo-cancel/:profileId
+ * CRM users only
+ */
+async function undoCancelMembership(req, res) {
+  try {
+    if (!req.user || req.user.userType !== USER_TYPE.CRM) {
+      return res.status(403).json({
+        status: "fail",
+        data: "Access denied. CRM users only.",
+      });
+    }
+
+    const { profileId } = req.params;
+    if (!profileId || !mongoose.Types.ObjectId.isValid(profileId)) {
+      return res.fail("Invalid profileId");
+    }
+
+    const cancelledSubscription = await Subscription.findOne({
+      profileId: new mongoose.Types.ObjectId(profileId),
+      subscriptionStatus: MEMBERSHIP_STATUS.CANCELLED,
+      deleted: { $ne: true },
+      cancellation: { $exists: true, $ne: null },
+    }).sort({ updatedAt: -1 });
+
+    if (!cancelledSubscription) {
+      return res.status(404).json({
+        status: "fail",
+        data: "No cancelled subscription found for this profile",
+      });
+    }
+
+    let updatedByObjectId = null;
+    if (req.userId && req.tenantId) {
+      try {
+        const crmUser = await User.findOne({
+          userId: req.userId,
+          tenantId: req.tenantId,
+        }).lean();
+        if (crmUser?._id) updatedByObjectId = crmUser._id;
+      } catch (e) {
+        console.warn(
+          `Warning: Could not find CRM user for userId ${req.userId}`
+        );
+      }
+    }
+
+    await Subscription.updateMany(
+      {
+        profileId: new mongoose.Types.ObjectId(profileId),
+        isCurrent: true,
+        deleted: { $ne: true },
+        _id: { $ne: cancelledSubscription._id },
+      },
+      { $set: { isCurrent: false } }
+    );
+
+    if (!cancelledSubscription.cancellation) {
+      cancelledSubscription.cancellation = {};
+    }
+    cancelledSubscription.cancellation.reinstated = true;
+    cancelledSubscription.isCurrent = true;
+    cancelledSubscription.subscriptionStatus = MEMBERSHIP_STATUS.ACTIVE;
+
+    if (updatedByObjectId) {
+      if (!cancelledSubscription.meta) cancelledSubscription.meta = {};
+      cancelledSubscription.meta.updatedBy = updatedByObjectId;
+    }
+
+    await cancelledSubscription.save();
+
+    try {
+      const identity = await buildDemotionEventPayload({
+        profileId: cancelledSubscription.profileId,
+        subscriptionUserId: cancelledSubscription.userId,
+        tenantId: cancelledSubscription.tenantId || req.tenantId,
+        req,
+      });
+      const publishResult = await publisher.publish(
+        MEMBERSHIP_EVENTS.SUBSCRIPTION_CANCELLATION_UNDONE,
+        {
+          subscriptionId: cancelledSubscription._id.toString(),
+          profileId: identity.profileId,
+          userId: identity.userId,
+          userEmail: identity.userEmail,
+          tenantId: identity.tenantId,
+          applicationId: cancelledSubscription.applicationId || null,
+        },
+        {
+          tenantId: cancelledSubscription.tenantId || req.tenantId,
+          exchange: "membership.events",
+          routingKey: MEMBERSHIP_EVENTS.SUBSCRIPTION_CANCELLATION_UNDONE,
+          metadata: { service: "subscription-service", version: "1.0" },
+        }
+      );
+      if (!publishResult.success) {
+        console.error("❌ Failed to publish subscription cancellation undone event:", {
+          error: publishResult.error,
+          subscriptionId: cancelledSubscription._id.toString(),
+        });
+      }
+    } catch (e) {
+      console.error("❌ Error publishing subscription cancellation undone event:", e.message);
+    }
+
+    return res.success({
+      message: "Cancellation undone successfully",
+      data: {
+        subscriptionId: cancelledSubscription._id,
+        profileId: cancelledSubscription.profileId,
+        subscriptionStatus: cancelledSubscription.subscriptionStatus,
+        isCurrent: cancelledSubscription.isCurrent,
+        cancellation: cancelledSubscription.cancellation,
+      },
+    });
+  } catch (error) {
+    console.error("Error undoing cancellation:", error.message);
+    return res.serverError(error);
+  }
+}
+
 module.exports = {
   getSubscriptionsByProfile,
   getSubscriptions,
   resignMembership,
   undoResignMembership,
   cancelMembership,
+  undoCancelMembership,
 };

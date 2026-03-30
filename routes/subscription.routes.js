@@ -6,6 +6,7 @@ const {
   resignMembership,
   undoResignMembership,
   cancelMembership,
+  undoCancelMembership,
 } = require("../controllers/subscription.controller");
 const {
   ensureAuthenticated,
@@ -32,5 +33,6 @@ router.put("/cancel/:profileId", ensureAuthenticated, cancelMembership);
 
 // CRM-only endpoint: Undo resignation for a profile
 router.put("/undo-resign/:profileId", ensureAuthenticated, undoResignMembership);
+router.put("/undo-cancel/:profileId", ensureAuthenticated, undoCancelMembership);
 
 module.exports = router;
