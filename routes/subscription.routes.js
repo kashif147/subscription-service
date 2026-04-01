@@ -3,6 +3,7 @@ const router = express.Router();
 const {
   getSubscriptionsByProfile,
   getSubscriptions,
+  getSubscriptionById,
   resignMembership,
   undoResignMembership,
   cancelMembership,
@@ -22,7 +23,10 @@ const getCurrentOnly = (req, res) => {
 router.get("/profile/:profileId/current", ensureAuthenticatedOrInternal, getCurrentOnly);
 router.get("/profile/:profileId", ensureAuthenticatedOrInternal, getSubscriptionsByProfile);
 
-// CRM-only endpoint: Get all subscriptions or single subscription by applicationId
+// CRM-only: enriched single subscription by Mongo _id (same shape as list `data` array items)
+router.get("/:subscriptionId", ensureAuthenticated, getSubscriptionById);
+
+// CRM-only endpoint: Get all subscriptions or filter by query (profileId, applicationId, isCurrent)
 router.get("/", ensureAuthenticated, getSubscriptions);
 
 // CRM-only endpoint: Resign membership for a profile (immediate portal demotion)

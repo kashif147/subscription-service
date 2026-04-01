@@ -63,56 +63,21 @@ async function getSubscriptionsByProfile(req, res) {
   }
 }
 
-async function getSubscriptions(req, res) {
-  try {
-    // Check if user is CRM
-    if (!req.user || req.user.userType !== USER_TYPE.CRM) {
-      return res.status(403).json({
-        status: "fail",
-        data: "Access denied. CRM users only.",
-      });
-    }
+/**
+ * Same enriched shape as GET /api/v1/subscriptions (profile + portal user + payments).
+ */
+async function enhanceSubscriptionsWithAggregation(subscriptions, req) {
+  if (!subscriptions || subscriptions.length === 0) {
+    return [];
+  }
 
-    const { profileId, applicationId, isCurrent } = req.query;
+  // ============================================================
+  // GATEWAY AGGREGATION: Use profileId (and applicationId), NOT userId.
+  // userId can be null; profileId is required on subscription, so we always have it.
+  // ============================================================
 
-    const query = { deleted: { $ne: true } };
-
-    // Restrict to CRM user's tenant so profile-service and account-service return data for same tenant
-    if (req.tenantId) {
-      query.tenantId = req.tenantId;
-    }
-
-    if (profileId) {
-      if (!mongoose.Types.ObjectId.isValid(profileId)) {
-        return res.fail("Invalid profileId");
-      }
-      query.profileId = new mongoose.Types.ObjectId(profileId);
-    }
-
-    if (applicationId && applicationId.trim()) {
-      query.applicationId = applicationId.trim();
-    }
-
-    if (isCurrent === "true") {
-      query.isCurrent = true;
-    } else if (isCurrent === "false") {
-      query.isCurrent = false;
-    }
-
-    console.log("🔍 Step 1: Fetching subscriptions from DB...");
-    const subscriptions = await Subscription.find(query)
-      .sort({ createdAt: -1 })
-      .lean();
-
-    console.log(`✅ Found ${subscriptions.length} subscriptions`);
-
-    // ============================================================
-    // GATEWAY AGGREGATION: Use profileId (and applicationId), NOT userId.
-    // userId can be null; profileId is required on subscription, so we always have it.
-    // ============================================================
-
-    // Step 2: Extract unique profileIds for batch fetching (never use userId for this)
-    const profileIds = [
+  // Step 2: Extract unique profileIds for batch fetching (never use userId for this)
+  const profileIds = [
       ...new Set(
         subscriptions
           .map((s) => (s.profileId ? s.profileId.toString() : null))
@@ -318,9 +283,57 @@ async function getSubscriptions(req, res) {
       })
     );
 
-    const withProfile = enhancedSubscriptions.filter(s => s.personalDetails?.membershipNo != null || s.personalDetails?.mobileNo != null).length;
-    console.log(`[Gateway Aggregation] Done: ${enhancedSubscriptions.length} subscriptions enhanced, ${withProfile} with profile data populated`);
-    console.log(`✅ Successfully enhanced ${enhancedSubscriptions.length} subscriptions`);
+  const withProfile = enhancedSubscriptions.filter(s => s.personalDetails?.membershipNo != null || s.personalDetails?.mobileNo != null).length;
+  console.log(`[Gateway Aggregation] Done: ${enhancedSubscriptions.length} subscriptions enhanced, ${withProfile} with profile data populated`);
+  console.log(`✅ Successfully enhanced ${enhancedSubscriptions.length} subscriptions`);
+
+  return enhancedSubscriptions;
+}
+
+async function getSubscriptions(req, res) {
+  try {
+    // Check if user is CRM
+    if (!req.user || req.user.userType !== USER_TYPE.CRM) {
+      return res.status(403).json({
+        status: "fail",
+        data: "Access denied. CRM users only.",
+      });
+    }
+
+    const { profileId, applicationId, isCurrent } = req.query;
+
+    const query = { deleted: { $ne: true } };
+
+    // Restrict to CRM user's tenant so profile-service and account-service return data for same tenant
+    if (req.tenantId) {
+      query.tenantId = req.tenantId;
+    }
+
+    if (profileId) {
+      if (!mongoose.Types.ObjectId.isValid(profileId)) {
+        return res.fail("Invalid profileId");
+      }
+      query.profileId = new mongoose.Types.ObjectId(profileId);
+    }
+
+    if (applicationId && applicationId.trim()) {
+      query.applicationId = applicationId.trim();
+    }
+
+    if (isCurrent === "true") {
+      query.isCurrent = true;
+    } else if (isCurrent === "false") {
+      query.isCurrent = false;
+    }
+
+    console.log("🔍 Step 1: Fetching subscriptions from DB...");
+    const subscriptions = await Subscription.find(query)
+      .sort({ createdAt: -1 })
+      .lean();
+
+    console.log(`✅ Found ${subscriptions.length} subscriptions`);
+
+    const enhancedSubscriptions = await enhanceSubscriptionsWithAggregation(subscriptions, req);
 
     return res.success({
       count: enhancedSubscriptions.length,
@@ -329,6 +342,53 @@ async function getSubscriptions(req, res) {
     });
   } catch (error) {
     console.error("❌ Error fetching subscriptions:", error.message);
+    return res.serverError(error);
+  }
+}
+
+/**
+ * CRM-only: one subscription by Mongo _id, same enriched shape as GET / (data is an array of one).
+ * GET /api/v1/subscriptions/:subscriptionId
+ */
+async function getSubscriptionById(req, res) {
+  try {
+    if (!req.user || req.user.userType !== USER_TYPE.CRM) {
+      return res.status(403).json({
+        status: "fail",
+        data: "Access denied. CRM users only.",
+      });
+    }
+
+    const { subscriptionId } = req.params;
+    if (!subscriptionId || !mongoose.Types.ObjectId.isValid(subscriptionId)) {
+      return res.fail("Invalid subscriptionId");
+    }
+
+    const query = {
+      _id: new mongoose.Types.ObjectId(subscriptionId),
+      deleted: { $ne: true },
+    };
+    if (req.tenantId) {
+      query.tenantId = req.tenantId;
+    }
+
+    const subscription = await Subscription.findOne(query).lean();
+    if (!subscription) {
+      return res.status(404).json({
+        status: "fail",
+        data: "Subscription not found",
+      });
+    }
+
+    const enhancedSubscriptions = await enhanceSubscriptionsWithAggregation([subscription], req);
+
+    return res.success({
+      count: enhancedSubscriptions.length,
+      data: enhancedSubscriptions,
+      _aggregated: true,
+    });
+  } catch (error) {
+    console.error("❌ Error fetching subscription by id:", error.message);
     return res.serverError(error);
   }
 }
@@ -898,6 +958,7 @@ async function undoCancelMembership(req, res) {
 module.exports = {
   getSubscriptionsByProfile,
   getSubscriptions,
+  getSubscriptionById,
   resignMembership,
   undoResignMembership,
   cancelMembership,
