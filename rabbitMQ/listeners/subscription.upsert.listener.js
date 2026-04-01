@@ -19,6 +19,75 @@ function startOfNextYear(date) {
   return new Date(Date.UTC(y + 1, 0, 1, 0, 0, 0, 0));
 }
 
+async function publishSubscriptionCurrentUpdatedEvent({
+  newSub,
+  profileIdObjectId,
+  applicationId,
+  memberId,
+  membershipCategory,
+  startDate,
+  userId,
+  tenantId,
+  payload,
+}) {
+  const subscriptionAppId = newSub.applicationId || applicationId;
+  const subscriptionMemberId = memberId || null;
+  const startDateISO =
+    startDate instanceof Date
+      ? startDate.toISOString().split("T")[0]
+      : new Date(startDate).toISOString().split("T")[0];
+
+  const publishResult = await publisher.publish(
+    MEMBERSHIP_EVENTS.SUBSCRIPTION_CURRENT_UPDATED,
+    {
+      subscriptionId: newSub._id.toString(),
+      profileId: profileIdObjectId.toString(),
+      applicationId: subscriptionAppId,
+      memberId: subscriptionMemberId,
+      userId: userId || null,
+      tenantId: tenantId || undefined,
+      effective: {
+        subscriptionDetails: {
+          membershipCategory: membershipCategory || null,
+          dateJoined: startDateISO,
+        },
+        professionalDetails: {
+          membershipCategory: membershipCategory || null,
+        },
+      },
+      subscriptionAttributes: { startDate: startDateISO },
+    },
+    {
+      tenantId,
+      correlationId: payload.correlationId,
+      exchange: "membership.events",
+      routingKey: MEMBERSHIP_EVENTS.SUBSCRIPTION_CURRENT_UPDATED,
+      metadata: { service: "subscription-service", version: "1.0" },
+    }
+  );
+
+  if (publishResult.success) {
+    console.log(
+      "✅ [SUBSCRIPTION_UPSERT_LISTENER] Subscription current updated event published successfully:",
+      {
+        eventId: publishResult.eventId,
+        subscriptionId: newSub._id.toString(),
+        profileId: profileIdObjectId.toString(),
+      }
+    );
+  } else {
+    console.error(
+      "❌ [SUBSCRIPTION_UPSERT_LISTENER] Failed to publish subscription current updated event:",
+      {
+        error: publishResult.error,
+        subscriptionId: newSub._id.toString(),
+        profileId: profileIdObjectId.toString(),
+      }
+    );
+  }
+  return publishResult;
+}
+
 async function handleSubscriptionUpsertRequested(payload, context) {
   console.log(
     "🚀 [SUBSCRIPTION_UPSERT_LISTENER] ===== EVENT RECEIVED ====="
@@ -133,44 +202,6 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       }
     }
 
-    // Try to find existing subscription for this year
-    const existingForYearQuery = {
-      profileId: profileIdObjectId,
-      subscriptionYear,
-    };
-    if (tenantId) {
-      existingForYearQuery.tenantId = tenantId;
-    }
-
-    const existingForYear = await Subscription.findOne(existingForYearQuery);
-
-    if (existingForYear) {
-      console.log(
-        "ℹ️ [SUBSCRIPTION_UPSERT_LISTENER] Existing subscription found for year, updating:",
-        {
-          subscriptionId: existingForYear._id,
-          subscriptionYear,
-        }
-      );
-      // Only allow updates of paymentType, paymentFrequency, payrollNo
-      const update = {};
-      if (paymentType != null) update.paymentType = paymentType;
-      if (paymentFrequency != null) update.paymentFrequency = paymentFrequency;
-      if (payrollNo != null) update.payrollNo = payrollNo;
-      if (Object.keys(update).length > 0) {
-        update["meta.updatedBy"] = null;
-        await Subscription.updateOne(
-          { _id: existingForYear._id },
-          { $set: update }
-        );
-        console.log(
-          "✅ [SUBSCRIPTION_UPSERT_LISTENER] Subscription updated successfully"
-        );
-      }
-      return;
-    }
-
-    // Make previous currents not current
     const updateCurrentQuery = {
       profileId: profileIdObjectId,
       isCurrent: true,
@@ -178,6 +209,63 @@ async function handleSubscriptionUpsertRequested(payload, context) {
     if (tenantId) {
       updateCurrentQuery.tenantId = tenantId;
     }
+
+    // Idempotent payment-only path: same profile + same applicationId as an existing row.
+    // A new applicationId always creates a new subscription document; prior rows (e.g. resigned) stay as history.
+    const normalizedAppId =
+      applicationId != null && String(applicationId).trim() !== ""
+        ? String(applicationId).trim()
+        : null;
+
+    if (normalizedAppId) {
+      const existingForAppQuery = {
+        profileId: profileIdObjectId,
+        applicationId: normalizedAppId,
+      };
+      if (tenantId) {
+        existingForAppQuery.tenantId = tenantId;
+      }
+
+      const existingForApp = await Subscription.findOne(existingForAppQuery);
+
+      if (existingForApp) {
+        console.log(
+          "ℹ️ [SUBSCRIPTION_UPSERT_LISTENER] Subscription already exists for this applicationId — payment fields only:",
+          {
+            subscriptionId: existingForApp._id,
+            applicationId: normalizedAppId,
+            subscriptionYear,
+          }
+        );
+        const update = {};
+        if (
+          paymentType != null &&
+          Object.values(PAYMENT_TYPE).includes(paymentType)
+        ) {
+          update.paymentType = paymentType;
+        }
+        if (
+          paymentFrequency != null &&
+          Object.values(PAYMENT_FREQUENCY).includes(paymentFrequency)
+        ) {
+          update.paymentFrequency = paymentFrequency;
+        }
+        if (payrollNo != null) {
+          update.payrollNo = payrollNo;
+        }
+        if (Object.keys(update).length > 0) {
+          await Subscription.updateOne(
+            { _id: existingForApp._id },
+            { $set: update }
+          );
+          console.log(
+            "✅ [SUBSCRIPTION_UPSERT_LISTENER] Subscription payment fields updated successfully"
+          );
+        }
+        return;
+      }
+    }
+
     await Subscription.updateMany(updateCurrentQuery, {
       $set: { isCurrent: false },
     });
@@ -319,60 +407,17 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       }
     );
 
-    // Include applicationId and memberId for account-service invoice creation and credit claiming
-    const subscriptionAppId = newSub.applicationId || applicationId;
-    const subscriptionMemberId = memberId || null;
-    const startDateISO =
-      startDate instanceof Date
-        ? startDate.toISOString().split("T")[0]
-        : new Date(startDate).toISOString().split("T")[0];
-
-    const publishResult = await publisher.publish(
-      MEMBERSHIP_EVENTS.SUBSCRIPTION_CURRENT_UPDATED,
-      {
-        subscriptionId: newSub._id.toString(),
-        profileId: profileIdObjectId.toString(),
-        applicationId: subscriptionAppId,
-        memberId: subscriptionMemberId,
-        userId: userId || null,
-        tenantId: tenantId || undefined,
-        effective: {
-          subscriptionDetails: {
-            membershipCategory: membershipCategory || null,
-            dateJoined: startDateISO,
-          },
-          professionalDetails: { membershipCategory: membershipCategory || null },
-        },
-        subscriptionAttributes: { startDate: startDateISO },
-      },
-      {
-        tenantId,
-        correlationId: payload.correlationId,
-        exchange: "membership.events",
-        routingKey: MEMBERSHIP_EVENTS.SUBSCRIPTION_CURRENT_UPDATED,
-        metadata: { service: "subscription-service", version: "1.0" },
-      }
-    );
-
-    if (publishResult.success) {
-    console.log(
-        "✅ [SUBSCRIPTION_UPSERT_LISTENER] Subscription current updated event published successfully:",
-        {
-          eventId: publishResult.eventId,
-          subscriptionId: newSub._id.toString(),
-          profileId: profileIdObjectId.toString(),
-        }
-      );
-    } else {
-      console.error(
-        "❌ [SUBSCRIPTION_UPSERT_LISTENER] Failed to publish subscription current updated event:",
-        {
-          error: publishResult.error,
-          subscriptionId: newSub._id.toString(),
-          profileId: profileIdObjectId.toString(),
-        }
-      );
-    }
+    await publishSubscriptionCurrentUpdatedEvent({
+      newSub,
+      profileIdObjectId,
+      applicationId,
+      memberId,
+      membershipCategory,
+      startDate,
+      userId,
+      tenantId,
+      payload,
+    });
   } catch (error) {
     // Enhanced error logging with multiple console methods to ensure visibility
     const errorDetails = {

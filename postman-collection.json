@@ -14,6 +14,11 @@
       "key": "authToken",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "profileId",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
@@ -53,6 +58,95 @@
               "path": ["api", "v1", "testing"]
             },
             "description": "Test endpoint that requires authentication"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Membership Lifecycle",
+      "item": [
+        {
+          "name": "Resign Membership",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dateResigned\": \"2026-03-30T00:00:00.000Z\",\n  \"reason\": \"Member requested resignation\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/subscriptions/resign/{{profileId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "subscriptions", "resign", "{{profileId}}"]
+            }
+          }
+        },
+        {
+          "name": "Undo Resign Membership",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/subscriptions/undo-resign/{{profileId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "subscriptions", "undo-resign", "{{profileId}}"]
+            }
+          }
+        },
+        {
+          "name": "Cancel Membership",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dateCancelled\": \"2026-03-30T00:00:00.000Z\",\n  \"reason\": \"Member requested cancellation\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/subscriptions/cancel/{{profileId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "subscriptions", "cancel", "{{profileId}}"]
+            }
+          }
+        },
+        {
+          "name": "Undo Cancel Membership",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/subscriptions/undo-cancel/{{profileId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "subscriptions", "undo-cancel", "{{profileId}}"]
+            }
           }
         }
       ]
