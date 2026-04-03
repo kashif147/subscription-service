@@ -82,6 +82,11 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       userEmail = null,
     } = data || {};
 
+    const resolvedUserId =
+      userId != null && String(userId).trim() !== ""
+        ? String(userId).trim()
+        : null;
+
     // Validate required fields
     if (!profileId) {
       console.error("❌ [SUBSCRIPTION_UPSERT_LISTENER] profileId is required but missing");
@@ -209,6 +214,9 @@ async function handleSubscriptionUpsertRequested(payload, context) {
         if (payrollNo != null) {
           update.payrollNo = payrollNo;
         }
+        if (resolvedUserId) {
+          update.userId = resolvedUserId;
+        }
         if (Object.keys(update).length > 0) {
           await Subscription.updateOne(
             { _id: existingForApp._id },
@@ -218,18 +226,23 @@ async function handleSubscriptionUpsertRequested(payload, context) {
             "✅ [SUBSCRIPTION_UPSERT_LISTENER] Subscription payment fields updated successfully"
           );
         }
+        // Re-fetch so publish uses latest userId if we just set it
+        const existingForPublish = await Subscription.findById(
+          existingForApp._id
+        ).lean();
+        const subForEvent = existingForPublish || existingForApp;
         // Re-publish current.updated only when this row is still current (avoid syncing resigned history).
-        if (existingForApp.isCurrent) {
+        if (subForEvent.isCurrent) {
           // Downstream (profile currentSubscriptionId, account invoicing) when event was missed or retried.
           await publishSubscriptionCurrentUpdatedEvent({
-            newSub: existingForApp,
-            profileIdObjectId: existingForApp.profileId,
-            applicationId: normalizedAppId || existingForApp.applicationId,
+            newSub: subForEvent,
+            profileIdObjectId: subForEvent.profileId,
+            applicationId: normalizedAppId || subForEvent.applicationId,
             memberId,
             membershipCategory:
-              membershipCategory ?? existingForApp.membershipCategory,
-            startDate: existingForApp.startDate,
-            userId,
+              membershipCategory ?? subForEvent.membershipCategory,
+            startDate: subForEvent.startDate,
+            userId: resolvedUserId || subForEvent.userId || null,
             tenantId,
             payload,
           });
@@ -282,6 +295,10 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       subscriptionData.tenantId = tenantId;
     }
 
+    if (resolvedUserId) {
+      subscriptionData.userId = resolvedUserId;
+    }
+
     // Set meta fields (createdBy will be null if user doesn't exist, subscription will still be created)
     subscriptionData.meta = {
       createdBy: null,
@@ -295,6 +312,7 @@ async function handleSubscriptionUpsertRequested(payload, context) {
         hasPaymentType: !!subscriptionData.paymentType,
         hasPaymentFrequency: !!subscriptionData.paymentFrequency,
         hasMembershipCategory: !!subscriptionData.membershipCategory,
+        hasUserId: !!subscriptionData.userId,
         profileId: profileIdObjectId.toString(),
         subscriptionYear,
       }
@@ -386,7 +404,7 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       memberId,
       membershipCategory,
       startDate,
-      userId,
+      userId: resolvedUserId || newSub.userId || null,
       tenantId,
       payload,
     });

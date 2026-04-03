@@ -8,6 +8,10 @@ const {
 	handleCrmUserCreated,
 	handleCrmUserUpdated,
 } = require("./listeners/user.crm.listener");
+const {
+	handlePortalUserCreated,
+	handlePortalUserUpdated,
+} = require("./listeners/user.portal.listener");
 
 // Custom logger wrapper to ensure RabbitMQ logs appear in Azure Log Stream
 // Maps logger.info() to console.log() so logs are visible
@@ -90,7 +94,7 @@ async function setupConsumers() {
 	console.log("   Queue:", USER_QUEUE);
 	console.log("   Exchange: user.events");
 	console.log(
-		"   Routing Keys: user.crm.created.v1, user.crm.updated.v1"
+		"   Routing Keys: user.crm.created.v1, user.crm.updated.v1, user.portal.created.v1, user.portal.updated.v1"
 	);
 
 	await consumer.createQueue(USER_QUEUE, {
@@ -101,6 +105,8 @@ async function setupConsumers() {
 	await consumer.bindQueue(USER_QUEUE, "user.events", [
 		"user.crm.created.v1",
 		"user.crm.updated.v1",
+		"user.portal.created.v1",
+		"user.portal.updated.v1",
 	]);
 
 	consumer.registerHandler(
@@ -114,6 +120,20 @@ async function setupConsumers() {
 		"user.crm.updated.v1",
 		async (payload, context) => {
 			await handleCrmUserUpdated(payload);
+		}
+	);
+
+	consumer.registerHandler(
+		"user.portal.created.v1",
+		async (payload, context) => {
+			await handlePortalUserCreated(payload);
+		}
+	);
+
+	consumer.registerHandler(
+		"user.portal.updated.v1",
+		async (payload, context) => {
+			await handlePortalUserUpdated(payload);
 		}
 	);
 
