@@ -12,6 +12,9 @@ const {
   buildPaymentMap,
 } = require("../helpers/serviceClient");
 const { buildDemotionEventPayload } = require("../helpers/demotionEventPayload");
+const {
+  publishSubscriptionCurrentUpdated,
+} = require("../rabbitMQ/publishers/subscription.current.updated.publisher.js");
 
 const MEMBERSHIP_CANCEL_GRACE_DAYS = 28;
 
@@ -687,6 +690,24 @@ async function undoResignMembership(req, res) {
       // Don't fail the request if event publishing fails
     }
 
+    try {
+      const cur = await publishSubscriptionCurrentUpdated(resignedSubscription, {
+        tenantId: resignedSubscription.tenantId || req.tenantId,
+        userId: resignedSubscription.userId ?? null,
+      });
+      if (!cur.success) {
+        console.error(
+          "❌ Failed to publish subscription current updated (undo resign):",
+          cur.error
+        );
+      }
+    } catch (curErr) {
+      console.error(
+        "❌ Error publishing subscription current updated (undo resign):",
+        curErr.message
+      );
+    }
+
     return res.success({
       message: "Resignation undone successfully",
       data: {
@@ -937,6 +958,24 @@ async function undoCancelMembership(req, res) {
       }
     } catch (e) {
       console.error("❌ Error publishing subscription cancellation undone event:", e.message);
+    }
+
+    try {
+      const cur = await publishSubscriptionCurrentUpdated(cancelledSubscription, {
+        tenantId: cancelledSubscription.tenantId || req.tenantId,
+        userId: cancelledSubscription.userId ?? null,
+      });
+      if (!cur.success) {
+        console.error(
+          "❌ Failed to publish subscription current updated (undo cancel):",
+          cur.error
+        );
+      }
+    } catch (curErr) {
+      console.error(
+        "❌ Error publishing subscription current updated (undo cancel):",
+        curErr.message
+      );
     }
 
     return res.success({

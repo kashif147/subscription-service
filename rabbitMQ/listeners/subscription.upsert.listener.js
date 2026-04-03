@@ -1,5 +1,8 @@
 const { MEMBERSHIP_EVENTS } = require("../events");
-const { consumer, publisher } = require("@projectShell/rabbitmq-middleware");
+const { consumer } = require("@projectShell/rabbitmq-middleware");
+const {
+  publishSubscriptionCurrentUpdated,
+} = require("../publishers/subscription.current.updated.publisher.js");
 const Subscription = require("../../models/subscription.model");
 const mongoose = require("mongoose");
 const {
@@ -21,7 +24,7 @@ function startOfNextYear(date) {
 
 async function publishSubscriptionCurrentUpdatedEvent({
   newSub,
-  profileIdObjectId,
+  profileIdObjectId: _profileIdObjectId,
   applicationId,
   memberId,
   membershipCategory,
@@ -30,62 +33,15 @@ async function publishSubscriptionCurrentUpdatedEvent({
   tenantId,
   payload,
 }) {
-  const subscriptionAppId = newSub.applicationId || applicationId;
-  const subscriptionMemberId = memberId || null;
-  const startDateISO =
-    startDate instanceof Date
-      ? startDate.toISOString().split("T")[0]
-      : new Date(startDate).toISOString().split("T")[0];
-
-  const publishResult = await publisher.publish(
-    MEMBERSHIP_EVENTS.SUBSCRIPTION_CURRENT_UPDATED,
-    {
-      subscriptionId: newSub._id.toString(),
-      profileId: profileIdObjectId.toString(),
-      applicationId: subscriptionAppId,
-      memberId: subscriptionMemberId,
-      userId: userId || null,
-      tenantId: tenantId || undefined,
-      effective: {
-        subscriptionDetails: {
-          membershipCategory: membershipCategory || null,
-          dateJoined: startDateISO,
-        },
-        professionalDetails: {
-          membershipCategory: membershipCategory || null,
-        },
-      },
-      subscriptionAttributes: { startDate: startDateISO },
-    },
-    {
-      tenantId,
-      correlationId: payload.correlationId,
-      exchange: "membership.events",
-      routingKey: MEMBERSHIP_EVENTS.SUBSCRIPTION_CURRENT_UPDATED,
-      metadata: { service: "subscription-service", version: "1.0" },
-    }
-  );
-
-  if (publishResult.success) {
-    console.log(
-      "✅ [SUBSCRIPTION_UPSERT_LISTENER] Subscription current updated event published successfully:",
-      {
-        eventId: publishResult.eventId,
-        subscriptionId: newSub._id.toString(),
-        profileId: profileIdObjectId.toString(),
-      }
-    );
-  } else {
-    console.error(
-      "❌ [SUBSCRIPTION_UPSERT_LISTENER] Failed to publish subscription current updated event:",
-      {
-        error: publishResult.error,
-        subscriptionId: newSub._id.toString(),
-        profileId: profileIdObjectId.toString(),
-      }
-    );
-  }
-  return publishResult;
+  return publishSubscriptionCurrentUpdated(newSub, {
+    applicationId,
+    memberId,
+    membershipCategory,
+    startDate,
+    userId,
+    tenantId,
+    correlationId: payload?.correlationId,
+  });
 }
 
 async function handleSubscriptionUpsertRequested(payload, context) {
@@ -261,6 +217,22 @@ async function handleSubscriptionUpsertRequested(payload, context) {
           console.log(
             "✅ [SUBSCRIPTION_UPSERT_LISTENER] Subscription payment fields updated successfully"
           );
+        }
+        // Re-publish current.updated only when this row is still current (avoid syncing resigned history).
+        if (existingForApp.isCurrent) {
+          // Downstream (profile currentSubscriptionId, account invoicing) when event was missed or retried.
+          await publishSubscriptionCurrentUpdatedEvent({
+            newSub: existingForApp,
+            profileIdObjectId: existingForApp.profileId,
+            applicationId: normalizedAppId || existingForApp.applicationId,
+            memberId,
+            membershipCategory:
+              membershipCategory ?? existingForApp.membershipCategory,
+            startDate: existingForApp.startDate,
+            userId,
+            tenantId,
+            payload,
+          });
         }
         return;
       }
