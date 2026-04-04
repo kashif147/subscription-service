@@ -3,12 +3,14 @@ const router = express.Router();
 const {
   getSubscriptionsByProfile,
   getSubscriptions,
+  getSubscriptionsWithTemplate,
   getSubscriptionById,
   resignMembership,
   undoResignMembership,
   cancelMembership,
   undoCancelMembership,
 } = require("../controllers/subscription.controller");
+const subscriptionFilterTemplateRoutes = require("./subscription.filter.template.routes");
 const {
   ensureAuthenticated,
   ensureAuthenticatedOrInternal,
@@ -22,6 +24,9 @@ const getCurrentOnly = (req, res) => {
 
 router.get("/profile/:profileId/current", ensureAuthenticatedOrInternal, getCurrentOnly);
 router.get("/profile/:profileId", ensureAuthenticatedOrInternal, getSubscriptionsByProfile);
+
+router.use("/templates", ensureAuthenticated, subscriptionFilterTemplateRoutes);
+router.put("/filter", ensureAuthenticated, getSubscriptionsWithTemplate);
 
 // CRM-only: enriched single subscription by Mongo _id (same shape as list `data` array items)
 router.get("/:subscriptionId", ensureAuthenticated, getSubscriptionById);

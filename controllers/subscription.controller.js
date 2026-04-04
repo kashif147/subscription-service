@@ -15,6 +15,12 @@ const { buildDemotionEventPayload } = require("../helpers/demotionEventPayload")
 const {
   publishSubscriptionCurrentUpdated,
 } = require("../rabbitMQ/publishers/subscription.current.updated.publisher.js");
+const subscriptionFilterTemplateService = require("../services/subscription.filter.template.service");
+const { AppError } = require("../errors/AppError");
+const {
+  buildSubscriptionMongoQueryFromTemplateFilters,
+  filterByColumns,
+} = require("../helpers/subscriptionListTemplate");
 
 const MEMBERSHIP_CANCEL_GRACE_DAYS = 28;
 
@@ -994,9 +1000,122 @@ async function undoCancelMembership(req, res) {
   }
 }
 
+/**
+ * CRM: paginated subscription list using saved filter/column template.
+ * PUT /api/v1/subscriptions/filter  body: { page?, limit?, templateId? }
+ */
+async function getSubscriptionsWithTemplate(req, res) {
+  try {
+    if (!req.user || req.user.userType !== USER_TYPE.CRM) {
+      return res.status(403).json({
+        status: "fail",
+        data: "Access denied. CRM users only.",
+      });
+    }
+    if (!req.tenantId) {
+      return res.status(400).json({
+        status: "fail",
+        data: "Missing tenant context",
+      });
+    }
+
+    const page = req.body.page ? parseInt(req.body.page, 10) : 1;
+    const limit = req.body.limit ? parseInt(req.body.limit, 10) : 10;
+    const templateId = req.body.templateId;
+    const crmUserId = String(req.user.sub || req.user.id);
+
+    let template;
+    try {
+      if (templateId) {
+        template = await subscriptionFilterTemplateService.getTemplateById(
+          templateId,
+          req.tenantId,
+          crmUserId
+        );
+        if (template.templateType && template.templateType !== "subscription") {
+          return res.status(400).json({
+            status: "fail",
+            data: "Template is not a subscription template.",
+          });
+        }
+      } else {
+        template =
+          await subscriptionFilterTemplateService.getDefaultTemplateForType(
+            req.tenantId,
+            crmUserId,
+            "subscription"
+          );
+        if (!template) {
+          template =
+            await subscriptionFilterTemplateService.getSystemDefaultTemplate(
+              req.tenantId,
+              "subscription"
+            );
+        }
+      }
+    } catch (err) {
+      if (err instanceof AppError && err.status === 404) {
+        return res.status(404).json({ status: "fail", data: err.message });
+      }
+      throw err;
+    }
+
+    const filters = template.filters || {};
+    const columns = template.columns || [];
+
+    const query = buildSubscriptionMongoQueryFromTemplateFilters(
+      filters,
+      req.tenantId
+    );
+    const skip = (page - 1) * limit;
+    const totalCount = await Subscription.countDocuments(query);
+    const subscriptions = await Subscription.find(query)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    const enhancedSubscriptions = await enhanceSubscriptionsWithAggregation(
+      subscriptions,
+      req
+    );
+
+    const data = enhancedSubscriptions.map((row) => {
+      const filtered = filterByColumns(row, columns);
+      if (row && row._id !== undefined) {
+        return { _id: row._id, ...filtered };
+      }
+      return filtered;
+    });
+
+    return res.success({
+      filter: template.filters || {},
+      columns,
+      templateId: template._id,
+      isDefault: !!template.isDefault,
+      systemDefault: !!template.systemDefault,
+      _aggregated: true,
+      count: data.length,
+      data,
+      pagination: {
+        page,
+        limit,
+        totalCount,
+        totalPages: Math.ceil(totalCount / limit) || 0,
+        hasNextPage: page < Math.ceil(totalCount / limit),
+        hasPreviousPage: page > 1,
+      },
+    });
+  } catch (error) {
+    console.error("getSubscriptionsWithTemplate:", error);
+    return res.serverError(error);
+  }
+}
+
 module.exports = {
   getSubscriptionsByProfile,
   getSubscriptions,
+  getSubscriptionsWithTemplate,
   getSubscriptionById,
   resignMembership,
   undoResignMembership,

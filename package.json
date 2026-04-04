@@ -5,7 +5,8 @@
   "main": "app.js",
   "scripts": {
     "start": "node ./bin/subscription-service",
-    "dev": "nodemon ./bin/subscription-service"
+    "dev": "nodemon ./bin/subscription-service",
+    "seed:subscription-template": "node scripts/seed-subscription-system-default-template.js"
   },
   "repository": {
     "type": "git",
