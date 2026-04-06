@@ -29,7 +29,7 @@ exports.PAYMENT_TYPE = {
   PAYROLL_DEDUCTION: "Salary Deduction",
   DIRECT_DEBIT: "Direct Debit",
   CARD_PAYMENT: "Credit Card",
-  SBO_PAYMENT: "Standing Bankers Order",
+  SBO_PAYMENT: "Standing Order",
 };
 
 // Payment Frequency Enums
