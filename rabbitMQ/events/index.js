@@ -2,6 +2,10 @@ const MEMBERSHIP_EVENTS = {
 	MEMBER_CREATED_REQUESTED: "members.member.created.requested.v1",
 	SUBSCRIPTION_UPSERT_REQUESTED: "members.subscription.upsert.requested.v1",
 	SUBSCRIPTION_CURRENT_UPDATED: "members.subscription.current.updated.v1",
+	/** CRM category change → account-service prorated fee adjustment (GL) */
+	SUBSCRIPTION_CATEGORY_CHANGED: "members.subscription.category.changed.v1",
+	/** CRM partial update → audit-service (before/after snapshot) */
+	SUBSCRIPTION_CHANGED: "members.subscription.changed.v1",
 	SUBSCRIPTION_RESIGNED: "members.subscription.resigned.v1",
 	SUBSCRIPTION_RESIGNATION_UNDONE: "members.subscription.resignation.undone.v1",
 	SUBSCRIPTION_CANCELLATION_UNDONE: "members.subscription.cancellation.undone.v1",

@@ -16,7 +16,22 @@
       "type": "string"
     },
     {
+      "key": "tenantId",
+      "value": "",
+      "type": "string"
+    },
+    {
       "key": "profileId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "subscriptionId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "templateId",
       "value": "",
       "type": "string"
     }
@@ -63,6 +78,377 @@
       ]
     },
     {
+      "name": "Subscriptions (CRM)",
+      "item": [
+        {
+          "name": "List subscriptions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/subscriptions?profileId={{profileId}}&applicationId=&isCurrent=",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "subscriptions"],
+              "query": [
+                {
+                  "key": "profileId",
+                  "value": "{{profileId}}",
+                  "description": "Optional ObjectId filter"
+                },
+                {
+                  "key": "applicationId",
+                  "value": "",
+                  "description": "Optional application id"
+                },
+                {
+                  "key": "isCurrent",
+                  "value": "",
+                  "description": "true | false"
+                }
+              ]
+            },
+            "description": "CRM only. Optional query: profileId, applicationId, isCurrent."
+          }
+        },
+        {
+          "name": "Get subscription by id",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/subscriptions/{{subscriptionId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "subscriptions", "{{subscriptionId}}"]
+            },
+            "description": "CRM only. Enriched shape (profile + payments aggregation)."
+          }
+        },
+        {
+          "name": "Get subscriptions by profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/subscriptions/profile/{{profileId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "subscriptions", "profile", "{{profileId}}"]
+            },
+            "description": "Auth or gateway-internal. All subscriptions for profile."
+          }
+        },
+        {
+          "name": "Get current subscription by profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/subscriptions/profile/{{profileId}}/current",
+              "host": ["{{baseUrl}}"],
+              "path": [
+                "api",
+                "v1",
+                "subscriptions",
+                "profile",
+                "{{profileId}}",
+                "current"
+              ]
+            },
+            "description": "Auth or gateway-internal. Current active subscription only."
+          }
+        },
+        {
+          "name": "Get subscriptions by profile (internal)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-internal-request",
+                "value": "true"
+              },
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/subscriptions/profile/{{profileId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "subscriptions", "profile", "{{profileId}}"]
+            },
+            "description": "Service-to-service: x-internal-request without Bearer."
+          }
+        },
+        {
+          "name": "Filter subscriptions (template)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"page\": 1,\n  \"limit\": 25,\n  \"templateId\": \"{{templateId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/subscriptions/filter",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "subscriptions", "filter"]
+            },
+            "description": "CRM only. Body: page, limit, optional templateId (Mongo id). Omit templateId to use default template."
+          }
+        },
+        {
+          "name": "Update subscription by id",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"membershipCategory\": \"Associate\",\n  \"subscriptionStartDate\": \"2026-01-15\",\n  \"paymentType\": \"Salary Deduction\",\n  \"payrollNo\": \"P12345\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/subscriptions/{{subscriptionId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "subscriptions", "{{subscriptionId}}"]
+            },
+            "description": "CRM only. Partial update: membershipCategory, subscriptionStartDate (or startDate), paymentType, payrollNo. Optional adjustmentKey for idempotent GL when category changes. paymentType: Salary Deduction | Direct Debit | Credit Card | Standing Order."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Filter templates (CRM)",
+      "item": [
+        {
+          "name": "Create template",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"My list view\",\n  \"templateType\": \"subscription\",\n  \"filters\": {},\n  \"columns\": [],\n  \"isDefault\": false,\n  \"pinned\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/subscriptions/templates",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "subscriptions", "templates"]
+            }
+          }
+        },
+        {
+          "name": "List my templates",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/subscriptions/templates?type=subscription",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "subscriptions", "templates"],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "subscription"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get default template",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/subscriptions/templates/default",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "subscriptions", "templates", "default"]
+            },
+            "description": "Resolves the default subscription list template for the user."
+          }
+        },
+        {
+          "name": "Get template by id",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/subscriptions/templates/{{templateId}}",
+              "host": ["{{baseUrl}}"],
+              "path": [
+                "api",
+                "v1",
+                "subscriptions",
+                "templates",
+                "{{templateId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update template",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Updated name\",\n  \"isDefault\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/subscriptions/templates/{{templateId}}",
+              "host": ["{{baseUrl}}"],
+              "path": [
+                "api",
+                "v1",
+                "subscriptions",
+                "templates",
+                "{{templateId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete template",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/subscriptions/templates/{{templateId}}",
+              "host": ["{{baseUrl}}"],
+              "path": [
+                "api",
+                "v1",
+                "subscriptions",
+                "templates",
+                "{{templateId}}"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "Membership Lifecycle",
       "item": [
         {
@@ -77,6 +463,10 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
+              },
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenantId}}"
               }
             ],
             "body": {
@@ -98,12 +488,22 @@
               {
                 "key": "Authorization",
                 "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenantId}}"
               }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/subscriptions/undo-resign/{{profileId}}",
               "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "subscriptions", "undo-resign", "{{profileId}}"]
+              "path": [
+                "api",
+                "v1",
+                "subscriptions",
+                "undo-resign",
+                "{{profileId}}"
+              ]
             }
           }
         },
@@ -119,6 +519,10 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
+              },
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenantId}}"
               }
             ],
             "body": {
@@ -140,12 +544,22 @@
               {
                 "key": "Authorization",
                 "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenantId}}"
               }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/subscriptions/undo-cancel/{{profileId}}",
               "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "subscriptions", "undo-cancel", "{{profileId}}"]
+              "path": [
+                "api",
+                "v1",
+                "subscriptions",
+                "undo-cancel",
+                "{{profileId}}"
+              ]
             }
           }
         }

@@ -1,7 +1,8 @@
 const mongoose = require("mongoose");
+const { randomUUID } = require("crypto");
 const Subscription = require("../models/subscription.model");
 const User = require("../models/user.model");
-const { USER_TYPE, MEMBERSHIP_STATUS } = require("../constants/enums");
+const { USER_TYPE, MEMBERSHIP_STATUS, PAYMENT_TYPE } = require("../constants/enums");
 const { publisher } = require("@projectShell/rabbitmq-middleware");
 const { MEMBERSHIP_EVENTS } = require("../rabbitMQ/events");
 const {
@@ -15,6 +16,10 @@ const { buildDemotionEventPayload } = require("../helpers/demotionEventPayload")
 const {
   publishSubscriptionCurrentUpdated,
 } = require("../rabbitMQ/publishers/subscription.current.updated.publisher.js");
+const {
+  serializeSubscriptionForAudit,
+  publishSubscriptionChangedAudit,
+} = require("../rabbitMQ/publishers/subscription.changed.audit.publisher.js");
 const subscriptionFilterTemplateService = require("../services/subscription.filter.template.service");
 const { AppError } = require("../errors/AppError");
 const {
@@ -23,6 +28,11 @@ const {
 } = require("../helpers/subscriptionListTemplate");
 
 const MEMBERSHIP_CANCEL_GRACE_DAYS = 28;
+
+function normalizeCategoryValue(c) {
+  if (c == null || c === "") return "";
+  return String(c).trim();
+}
 
 // Get subscription(s) for a profile. Auth required (CRM + Portal).
 // GET /api/v1/subscriptions/profile/:profileId/current - current subscription only
@@ -58,8 +68,10 @@ async function getSubscriptionsByProfile(req, res) {
 
     if (onlyCurrent) {
       const sub = subscriptions[0] || null;
+      // Return full document (same fields as list endpoint items), not only startDate —
+      // callers need membershipCategory, paymentType, etc.
       return res.success({
-        data: sub ? { startDate: sub.startDate } : null,
+        data: sub,
       });
     }
 
@@ -403,6 +415,251 @@ async function getSubscriptionById(req, res) {
 }
 
 /**
+ * CRM-only: update membership category, start date, payment type, payroll number.
+ * PUT /api/v1/subscriptions/:subscriptionId
+ * When membership category changes, publishes members.subscription.category.changed.v1 for account-service (GL fee adjustment).
+ */
+async function updateSubscriptionById(req, res) {
+  try {
+    if (!req.user || req.user.userType !== USER_TYPE.CRM) {
+      return res.status(403).json({
+        status: "fail",
+        data: "Access denied. CRM users only.",
+      });
+    }
+
+    const { subscriptionId } = req.params;
+    if (!subscriptionId || !mongoose.Types.ObjectId.isValid(subscriptionId)) {
+      return res.fail("Invalid subscriptionId");
+    }
+
+    const body = req.body || {};
+    const touched =
+      Object.prototype.hasOwnProperty.call(body, "membershipCategory") ||
+      Object.prototype.hasOwnProperty.call(body, "subscriptionStartDate") ||
+      Object.prototype.hasOwnProperty.call(body, "startDate") ||
+      Object.prototype.hasOwnProperty.call(body, "paymentType") ||
+      Object.prototype.hasOwnProperty.call(body, "payrollNo");
+
+    if (!touched) {
+      return res.fail(
+        "Provide at least one of: membershipCategory, subscriptionStartDate, paymentType, payrollNo"
+      );
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(body, "adjustmentKey") &&
+      body.adjustmentKey != null &&
+      body.adjustmentKey !== ""
+    ) {
+      if (typeof body.adjustmentKey !== "string" || !body.adjustmentKey.trim()) {
+        return res.fail("adjustmentKey must be a non-empty string when provided");
+      }
+    }
+
+    const query = {
+      _id: new mongoose.Types.ObjectId(subscriptionId),
+      deleted: { $ne: true },
+    };
+    if (req.tenantId) {
+      query.tenantId = req.tenantId;
+    }
+
+    const doc = await Subscription.findOne(query);
+    if (!doc) {
+      return res.status(404).json({
+        status: "fail",
+        data: "Subscription not found",
+      });
+    }
+
+    const beforePlain = serializeSubscriptionForAudit(doc);
+
+    const prevCategory = doc.membershipCategory;
+    const prevStartDate = doc.startDate;
+
+    if (Object.prototype.hasOwnProperty.call(body, "paymentType")) {
+      const pt = body.paymentType;
+      if (pt == null || pt === "") {
+        return res.fail(
+          `paymentType is required when sent; use one of: ${Object.values(PAYMENT_TYPE).join(", ")}`
+        );
+      }
+      if (!Object.values(PAYMENT_TYPE).includes(pt)) {
+        return res.fail(
+          `Invalid paymentType. Allowed: ${Object.values(PAYMENT_TYPE).join(", ")}`
+        );
+      }
+      doc.paymentType = pt;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(body, "payrollNo")) {
+      doc.payrollNo =
+        body.payrollNo === null || body.payrollNo === undefined
+          ? null
+          : String(body.payrollNo);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(body, "membershipCategory")) {
+      doc.membershipCategory =
+        body.membershipCategory === null || body.membershipCategory === undefined
+          ? null
+          : String(body.membershipCategory).trim() || null;
+    }
+
+    const startInput =
+      body.subscriptionStartDate !== undefined
+        ? body.subscriptionStartDate
+        : body.startDate !== undefined
+          ? body.startDate
+          : undefined;
+
+    if (startInput !== undefined) {
+      const sd = new Date(startInput);
+      if (Number.isNaN(sd.getTime())) {
+        return res.fail("Invalid subscriptionStartDate");
+      }
+      if (doc.endDate && sd > doc.endDate) {
+        return res.fail("subscriptionStartDate must be on or before endDate");
+      }
+      doc.startDate = sd;
+    }
+
+    let updatedByObjectId = null;
+    if (req.userId && req.tenantId) {
+      try {
+        const crmUser = await User.findOne({
+          userId: req.userId,
+          tenantId: req.tenantId,
+        }).lean();
+        if (crmUser?._id) updatedByObjectId = crmUser._id;
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    if (updatedByObjectId) {
+      if (!doc.meta) doc.meta = {};
+      doc.meta.updatedBy = updatedByObjectId;
+    }
+
+    const categoryChanged =
+      normalizeCategoryValue(prevCategory) !==
+      normalizeCategoryValue(doc.membershipCategory);
+
+    const changedFields = [];
+    if (Object.prototype.hasOwnProperty.call(body, "membershipCategory")) {
+      changedFields.push("membershipCategory");
+    }
+    if (startInput !== undefined) {
+      changedFields.push("startDate");
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "paymentType")) {
+      changedFields.push("paymentType");
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "payrollNo")) {
+      changedFields.push("payrollNo");
+    }
+
+    await doc.save();
+
+    let categoryChangeEventPublished = false;
+    let adjustmentKey = null;
+    let memberIdResolved = false;
+
+    if (categoryChanged) {
+      adjustmentKey =
+        typeof body.adjustmentKey === "string" && body.adjustmentKey.trim()
+          ? body.adjustmentKey.trim()
+          : randomUUID();
+
+      let memberId = null;
+      try {
+        const profiles = await fetchProfilesByIds(
+          [doc.profileId],
+          doc.tenantId || req.tenantId,
+          req
+        );
+        memberId = profiles[0]?.membershipNumber ?? null;
+        memberIdResolved = !!(memberId && String(memberId).trim());
+      } catch (e) {
+        console.warn("updateSubscriptionById: profile fetch failed:", e.message);
+      }
+
+      try {
+        const publishResult = await publisher.publish(
+          MEMBERSHIP_EVENTS.SUBSCRIPTION_CATEGORY_CHANGED,
+          {
+            subscriptionId: doc._id.toString(),
+            profileId: doc.profileId.toString(),
+            tenantId: doc.tenantId || req.tenantId || undefined,
+            applicationId: doc.applicationId || null,
+            memberId: memberIdResolved ? String(memberId).trim() : null,
+            adjustmentKey,
+            previousMembershipCategory: prevCategory ?? null,
+            membershipCategory: doc.membershipCategory ?? null,
+            previousStartDate: prevStartDate,
+            subscriptionStartDate: doc.startDate,
+            actorUserId: req.userId || null,
+            actorEmail: req.user?.email || null,
+          },
+          {
+            tenantId: doc.tenantId || req.tenantId,
+            exchange: "membership.events",
+            routingKey: MEMBERSHIP_EVENTS.SUBSCRIPTION_CATEGORY_CHANGED,
+            metadata: { service: "subscription-service", version: "1.0" },
+          }
+        );
+        categoryChangeEventPublished = !!publishResult.success;
+        if (!publishResult.success) {
+          console.error("SUBSCRIPTION_CATEGORY_CHANGED publish failed:", {
+            error: publishResult.error,
+            subscriptionId: doc._id.toString(),
+          });
+        }
+      } catch (e) {
+        console.error("SUBSCRIPTION_CATEGORY_CHANGED publish error:", e.message);
+      }
+    }
+
+    try {
+      const auditResult = await publishSubscriptionChangedAudit({
+        tenantId: doc.tenantId || req.tenantId,
+        subscriptionId: doc._id.toString(),
+        profileId: doc.profileId.toString(),
+        applicationId: doc.applicationId || null,
+        actorUserId: req.userId || null,
+        actorEmail: req.user?.email || null,
+        changedFields,
+        before: beforePlain,
+        after: serializeSubscriptionForAudit(doc),
+      });
+      if (!auditResult.success) {
+        console.error("SUBSCRIPTION_CHANGED audit publish failed:", {
+          error: auditResult.error,
+          subscriptionId: doc._id.toString(),
+        });
+      }
+    } catch (e) {
+      console.error("SUBSCRIPTION_CHANGED audit publish error:", e.message);
+    }
+
+    return res.success({
+      message: "Subscription updated",
+      data: {
+        subscription: doc.toObject(),
+        categoryChanged,
+        categoryChangeEventPublished,
+        adjustmentKey: categoryChanged ? adjustmentKey : undefined,
+        memberIdResolved: categoryChanged ? memberIdResolved : undefined,
+      },
+    });
+  } catch (error) {
+    console.error("updateSubscriptionById:", error.message);
+    return res.serverError(error);
+  }
+}
+
+/**
  * Cancel/Resign membership for a profile
  * PUT /api/v1/subscriptions/resign/:profileId
  * CRM users only
@@ -507,6 +764,8 @@ async function resignMembership(req, res) {
           tenantId: identity.tenantId,
           userId: identity.userId,
           userEmail: identity.userEmail,
+          actorUserId: req.userId || null,
+          actorEmail: req.user?.email || null,
           reason: "resigned",
           applicationId: currentSubscription.applicationId || null,
         },
@@ -660,6 +919,8 @@ async function undoResignMembership(req, res) {
           userId: identity.userId,
           userEmail: identity.userEmail,
           tenantId: identity.tenantId,
+          actorUserId: req.userId || null,
+          actorEmail: req.user?.email || null,
           applicationId: resignedSubscription.applicationId || null,
         },
         {
@@ -826,6 +1087,8 @@ async function cancelMembership(req, res) {
           profileId: currentSubscription.profileId.toString(),
           tenantId: currentSubscription.tenantId || req.tenantId,
           applicationId: currentSubscription.applicationId || null,
+          actorUserId: req.userId || null,
+          actorEmail: req.user?.email || null,
         },
         {
           tenantId: currentSubscription.tenantId || req.tenantId,
@@ -947,6 +1210,8 @@ async function undoCancelMembership(req, res) {
           userId: identity.userId,
           userEmail: identity.userEmail,
           tenantId: identity.tenantId,
+          actorUserId: req.userId || null,
+          actorEmail: req.user?.email || null,
           applicationId: cancelledSubscription.applicationId || null,
         },
         {
@@ -1117,6 +1382,7 @@ module.exports = {
   getSubscriptions,
   getSubscriptionsWithTemplate,
   getSubscriptionById,
+  updateSubscriptionById,
   resignMembership,
   undoResignMembership,
   cancelMembership,

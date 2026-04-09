@@ -5,6 +5,7 @@ const {
   getSubscriptions,
   getSubscriptionsWithTemplate,
   getSubscriptionById,
+  updateSubscriptionById,
   resignMembership,
   undoResignMembership,
   cancelMembership,
@@ -27,6 +28,9 @@ router.get("/profile/:profileId", ensureAuthenticatedOrInternal, getSubscription
 
 router.use("/templates", ensureAuthenticated, subscriptionFilterTemplateRoutes);
 router.put("/filter", ensureAuthenticated, getSubscriptionsWithTemplate);
+
+// CRM-only: partial update by Mongo _id (category change → RabbitMQ for account-service GL)
+router.put("/:subscriptionId", ensureAuthenticated, updateSubscriptionById);
 
 // CRM-only: enriched single subscription by Mongo _id (same shape as list `data` array items)
 router.get("/:subscriptionId", ensureAuthenticated, getSubscriptionById);
