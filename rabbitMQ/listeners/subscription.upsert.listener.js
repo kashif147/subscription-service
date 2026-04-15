@@ -32,6 +32,7 @@ async function publishSubscriptionCurrentUpdatedEvent({
   userId,
   tenantId,
   payload,
+  processingDate,
 }) {
   return publishSubscriptionCurrentUpdated(newSub, {
     applicationId,
@@ -41,6 +42,7 @@ async function publishSubscriptionCurrentUpdatedEvent({
     userId,
     tenantId,
     correlationId: payload?.correlationId,
+    processingDate,
   });
 }
 
@@ -75,6 +77,7 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       memberId = null,
       membershipCategory = null,
       dateJoined,
+      processingDate = null,
       paymentType = null,
       payrollNo = null,
       paymentFrequency = null,
@@ -245,6 +248,7 @@ async function handleSubscriptionUpsertRequested(payload, context) {
             userId: resolvedUserId || subForEvent.userId || null,
             tenantId,
             payload,
+            processingDate,
           });
         }
         return;
@@ -407,6 +411,7 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       userId: resolvedUserId || newSub.userId || null,
       tenantId,
       payload,
+      processingDate,
     });
   } catch (error) {
     // Enhanced error logging with multiple console methods to ensure visibility

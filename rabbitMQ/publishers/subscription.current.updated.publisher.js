@@ -34,6 +34,22 @@ async function publishSubscriptionCurrentUpdated(subscriptionDoc, ctx = {}) {
     ctx.userId !== undefined ? ctx.userId : subscriptionDoc.userId ?? null;
   const tenantId = ctx.tenantId ?? subscriptionDoc.tenantId;
 
+  let processingDateISO;
+  if (ctx.processingDate != null && ctx.processingDate !== "") {
+    const pd =
+      ctx.processingDate instanceof Date
+        ? ctx.processingDate
+        : new Date(ctx.processingDate);
+    if (!Number.isNaN(pd.getTime())) {
+      processingDateISO = pd.toISOString().split("T")[0];
+    }
+  }
+
+  const subscriptionAttributes = { startDate: startDateISO };
+  if (processingDateISO) {
+    subscriptionAttributes.processingDate = processingDateISO;
+  }
+
   const publishResult = await publisher.publish(
     MEMBERSHIP_EVENTS.SUBSCRIPTION_CURRENT_UPDATED,
     {
@@ -52,7 +68,7 @@ async function publishSubscriptionCurrentUpdated(subscriptionDoc, ctx = {}) {
           membershipCategory: membershipCategory || null,
         },
       },
-      subscriptionAttributes: { startDate: startDateISO },
+      subscriptionAttributes,
     },
     {
       tenantId,

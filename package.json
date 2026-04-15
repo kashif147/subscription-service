@@ -16,7 +16,7 @@
     "@membership/policy-middleware": "github:kashif147/policy-middleware#gateway",
     "@projectShell/rabbitmq-middleware": "github:kashif147/rabbitmq-middleware#gateway",
     "amqplib": "^0.10.9",
-    "axios": "^1.8.4",
+    "axios": "^1.15.0",
     "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
