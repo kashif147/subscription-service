@@ -256,6 +256,13 @@ async function enhanceSubscriptionsWithAggregation(subscriptions, req) {
 
           // ========== PERSONAL DETAILS (FROM PROFILE-SERVICE) – every field always sent ==========
           personalDetails: {
+            fullName:
+              profile?.personalInfo?.fullName?.trim() ||
+              [profile?.personalInfo?.forename, profile?.personalInfo?.surname]
+                .filter(Boolean)
+                .join(" ")
+                .trim() ||
+              null,
             membershipNo: profile?.membershipNumber ?? null,
             mobileNo: profile?.contactInfo?.mobileNumber ?? null,
             dateOfBirth: profile?.personalInfo?.dateOfBirth ?? null,

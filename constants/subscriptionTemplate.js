@@ -53,6 +53,7 @@ exports.SUBSCRIPTION_RESPONSE_COLUMNS = [
   "user.userFullName",
   "lastModifiedBy",
   "lastModifiedAt",
+  "personalDetails.fullName",
   "personalDetails.membershipNo",
   "personalDetails.mobileNo",
   "personalDetails.dateOfBirth",
