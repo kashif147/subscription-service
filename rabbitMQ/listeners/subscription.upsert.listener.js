@@ -22,6 +22,44 @@ function startOfNextYear(date) {
   return new Date(Date.UTC(y + 1, 0, 1, 0, 0, 0, 0));
 }
 
+function parseDateOnlyAsUtcNoon(value) {
+  if (value == null || value === "") return null;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    return new Date(
+      Date.UTC(
+        value.getUTCFullYear(),
+        value.getUTCMonth(),
+        value.getUTCDate(),
+        12,
+        0,
+        0,
+        0
+      )
+    );
+  }
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const datePart = raw.split("T")[0];
+  if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+    const [year, month, day] = datePart.split("-").map(Number);
+    return new Date(Date.UTC(year, month - 1, day, 12, 0, 0, 0));
+  }
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return new Date(
+    Date.UTC(
+      parsed.getUTCFullYear(),
+      parsed.getUTCMonth(),
+      parsed.getUTCDate(),
+      12,
+      0,
+      0,
+      0
+    )
+  );
+}
+
 async function publishSubscriptionCurrentUpdatedEvent({
   newSub,
   profileIdObjectId: _profileIdObjectId,
@@ -96,21 +134,24 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       throw new Error("profileId is required");
     }
     
-    // Handle dateJoined - it might be a Date object, ISO string, or missing
-    let startDate;
-    if (!dateJoined) {
+    // Handle dateJoined as a date-only value to avoid timezone day-shift.
+    let startDate = parseDateOnlyAsUtcNoon(dateJoined);
+    if (!startDate) {
       console.warn(
         "⚠️ [SUBSCRIPTION_UPSERT_LISTENER] dateJoined is missing, using current date"
       );
-      startDate = new Date();
-    } else {
-      startDate = new Date(dateJoined);
-      if (isNaN(startDate.getTime())) {
-        console.warn(
-          `⚠️ [SUBSCRIPTION_UPSERT_LISTENER] Invalid dateJoined format: ${dateJoined}, using current date`
-        );
-        startDate = new Date();
-      }
+      const now = new Date();
+      startDate = new Date(
+        Date.UTC(
+          now.getUTCFullYear(),
+          now.getUTCMonth(),
+          now.getUTCDate(),
+          12,
+          0,
+          0,
+          0
+        )
+      );
     }
     
     if (!tenantId) {
