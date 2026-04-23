@@ -3,6 +3,30 @@ const axios = require('axios');
 const PROFILE_SERVICE_URL = process.env.PROFILE_SERVICE_URL || 'http://projectshell-vm.northeurope.cloudapp.azure.com/profile-service';
 const ACCOUNT_SERVICE_URL = process.env.ACCOUNT_SERVICE_URL || 'http://projectshell-vm.northeurope.cloudapp.azure.com/account-service';
 
+/** Minimal request shape for internal async workers (RabbitMQ/event consumers). */
+function createInternalWorkerReq(tenantId, actor = {}) {
+  const tid = tenantId || "default";
+  const { userId = null, email = null } = actor || {};
+  return {
+    headers: { "x-tenant-id": tid, "x-internal-request": "true" },
+    tenantId: tid,
+    userId: userId || undefined,
+    user: email ? { email } : undefined,
+  };
+}
+
+function buildAccountInternalHeaders(tenantId) {
+  const key = process.env.ACCOUNTS_API_KEY || '';
+  if (!key) {
+    throw new Error('ACCOUNTS_API_KEY is required for account-service internal calls');
+  }
+  return {
+    'Content-Type': 'application/json',
+    'x-tenant-id': tenantId || 'default',
+    'x-api-key': key,
+  };
+}
+
 function buildServiceHeaders(req, tenantId) {
   const headers = {
     'Content-Type': 'application/json',
@@ -204,9 +228,38 @@ function buildPaymentMap(payments) {
   return map;
 }
 
+/**
+ * Bulk reminder-batch eligibility (materialized 1400 arrears + last Receipt) for many memberIds.
+ * @param {string[]} memberIds - ledger member ids (typically membership numbers)
+ * @param {string} tenantId
+ * @param {string|Date} [asOf]
+ * @returns {Promise<object[]>} snapshot items (same shape as GET single)
+ */
+async function fetchReminderEligibilityBulk(memberIds, tenantId, asOf) {
+  if (!memberIds || memberIds.length === 0) return [];
+  const headers = buildAccountInternalHeaders(tenantId);
+  const url = `${ACCOUNT_SERVICE_URL}/api/internal/members/reminder-eligibility-bulk`;
+  const asOfIso =
+    asOf instanceof Date
+      ? asOf.toISOString()
+      : asOf
+        ? String(asOf)
+        : undefined;
+  const response = await axios.post(
+    url,
+    { memberIds, asOf: asOfIso },
+    { headers, timeout: 120000 }
+  );
+  const payload = response.data?.data;
+  if (payload && Array.isArray(payload.items)) return payload.items;
+  return [];
+}
+
 module.exports = {
+  createInternalWorkerReq,
   fetchProfilesByIds,
   fetchPaymentsByMemberIds,
+  fetchReminderEligibilityBulk,
   calculateFinancialDetails,
   getMembershipFeeByCategory,
   buildProfileMap,

@@ -240,6 +240,7 @@ async function enhanceSubscriptionsWithAggregation(subscriptions, req) {
           rolloverDate: subscription.rolloverDate ?? null,
           cancellation: subscription.cancellation ?? null,
           resignation: subscription.resignation ?? null,
+          reminderHistory: subscription.reminderHistory ?? null,
           reminders: subscription.reminders ?? null,
           yearend: subscription.yearend ?? null,
           createdAt: subscription.createdAt ?? null,

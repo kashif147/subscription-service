@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node ./bin/subscription-service",
     "dev": "nodemon ./bin/subscription-service",
-    "seed:subscription-template": "node scripts/seed-subscription-system-default-template.js"
+    "seed:subscription-template": "node scripts/seed-subscription-system-default-template.js",
+    "test": "node --test tests/renewalBatch.test.js"
   },
   "repository": {
     "type": "git",

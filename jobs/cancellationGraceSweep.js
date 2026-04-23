@@ -3,6 +3,9 @@ const { MEMBERSHIP_STATUS } = require("../constants/enums");
 const { publisher } = require("@projectShell/rabbitmq-middleware");
 const { MEMBERSHIP_EVENTS } = require("../rabbitMQ/events");
 const { buildDemotionEventPayload } = require("../helpers/demotionEventPayload");
+const {
+  isCancelledSubscriptionEligibleForPortalDemotion,
+} = require("../helpers/portalRoleDemotionEligibility.js");
 
 const INTERVAL_MS = parseInt(
   process.env.CANCELLATION_GRACE_SWEEP_MS || String(60 * 60 * 1000),
@@ -47,6 +50,7 @@ async function runCancellationGraceSweepOnce() {
   const query = {
     subscriptionStatus: MEMBERSHIP_STATUS.CANCELLED,
     deleted: { $ne: true },
+    "cancellation.dateCancelled": { $exists: true, $ne: null },
     "cancellation.gracePeriodEnd": { $lte: now },
     $or: [
       { "cancellation.portalRoleDemotionPublishedAt": null },
@@ -65,6 +69,9 @@ async function runCancellationGraceSweepOnce() {
       continue;
     }
     if (doc.cancellation.portalRoleDemotionPublishedAt) {
+      continue;
+    }
+    if (!isCancelledSubscriptionEligibleForPortalDemotion(doc, now)) {
       continue;
     }
 

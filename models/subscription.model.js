@@ -7,6 +7,7 @@ const {
   REMINDER_TYPE,
   YEAREND_RESULT,
   MEMBERSHIP_MOVEMENT,
+  CANCELLATION_SOURCE,
 } = require("../constants/enums");
 
 const SubscriptionSchema = new mongoose.Schema(
@@ -44,6 +45,10 @@ const SubscriptionSchema = new mongoose.Schema(
 
     // Cancellation workflow
     cancellation: {
+      source: {
+        type: String,
+        enum: Object.values(CANCELLATION_SOURCE),
+      },
       dateCancelled: Date, // Date of cancellation
       reason: String, // Reason for cancellation
       gracePeriodEnd: Date, // Date of the end of the grace period dateCancelled + 28 days
@@ -56,13 +61,33 @@ const SubscriptionSchema = new mongoose.Schema(
       dateResigned: Date, // Date of resignation
       reason: String, // Reason for resignation
     },
-    // Reminder workflow
-    reminders: [
+    // Legacy list of reminder events (R1/R2/R3 type + date); renamed from `reminders` to free that key for the batch pipeline object below
+    reminderHistory: [
       {
         type: { type: String, enum: Object.values(REMINDER_TYPE) },
-        reminderDate: Date, // Date of the reminder
+        reminderDate: Date,
       },
     ],
+    // Reminder / cancellation batch pipeline (dates + batch refs). GL arrears bucket is unchanged on ledger; this is membership-side state only.
+    reminders: {
+      reminder1At: { type: Date, default: null },
+      reminder2At: { type: Date, default: null },
+      reminder3At: { type: Date, default: null },
+      lastReminderBatchId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "ReminderBatch",
+        default: null,
+      },
+      cancellationBatchNotifiedAt: { type: Date, default: null },
+      scheduledEnforcementDate: { type: Date, default: null },
+      reminderCancellationBatchId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "ReminderBatch",
+        default: null,
+      },
+      clearedAt: { type: Date, default: null },
+      clearedReason: { type: String, default: null, trim: true },
+    },
     // Year-end processing
     yearend: {
       processed: { type: Boolean, default: false }, // True if the year-end processing is done

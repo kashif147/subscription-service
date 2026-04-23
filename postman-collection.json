@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Subscription Service API",
-    "description": "Complete API collection for Subscription Service",
+    "description": "Subscription Service API. Includes Reminder batches (CRM) at /api/v1/reminder-batches — JWT must carry userType CRM (or gateway x-user-type: CRM). Import reminder-batches.postman_collection.json for subscription + account internal eligibility in one file.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -32,6 +32,11 @@
     },
     {
       "key": "templateId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "reminderBatchId",
       "value": "",
       "type": "string"
     }
@@ -444,6 +449,236 @@
                 "{{templateId}}"
               ]
             }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reminder batches (CRM)",
+      "description": "Requires CRM userType on JWT (Bearer) or gateway headers. Always send x-tenant-id with Bearer if tenant is not only inside the token. After Create, copy _id into {{reminderBatchId}} for build/execute/members/get.",
+      "item": [
+        {
+          "name": "Create reminder batch (REMINDER)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"April 2026 reminder run\",\n  \"kind\": \"REMINDER\",\n  \"batchDate\": \"2026-04-18T12:00:00.000Z\",\n  \"referencePeriod\": \"2026-04\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/reminder-batches",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "reminder-batches"]
+            },
+            "description": "kind: REMINDER | CANCELLATION. Optional previousReminderBatchId (ObjectId string)."
+          }
+        },
+        {
+          "name": "Create reminder batch (CANCELLATION)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"April 2026 cancellation batch\",\n  \"kind\": \"CANCELLATION\",\n  \"batchDate\": \"2026-04-18T12:00:00.000Z\",\n  \"referencePeriod\": \"2026-04\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/reminder-batches",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "reminder-batches"]
+            }
+          }
+        },
+        {
+          "name": "List reminder batches",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/reminder-batches?kind=&status=&page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "reminder-batches"],
+              "query": [
+                {
+                  "key": "kind",
+                  "value": "",
+                  "description": "REMINDER or CANCELLATION"
+                },
+                {
+                  "key": "status",
+                  "value": "",
+                  "description": "draft | pending_build | ready | executing | completed | failed | superseded"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get reminder batch by id",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/reminder-batches/{{reminderBatchId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "reminder-batches", "{{reminderBatchId}}"]
+            }
+          }
+        },
+        {
+          "name": "List reminder batch members",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/reminder-batches/{{reminderBatchId}}/members?tier=&included=&page=1&limit=50",
+              "host": ["{{baseUrl}}"],
+              "path": [
+                "api",
+                "v1",
+                "reminder-batches",
+                "{{reminderBatchId}}",
+                "members"
+              ],
+              "query": [
+                {
+                  "key": "tier",
+                  "value": "",
+                  "description": "R1 | R2 | R3 | CANCEL"
+                },
+                {
+                  "key": "included",
+                  "value": "",
+                  "description": "true | false"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Build reminder batch",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/reminder-batches/{{reminderBatchId}}/build",
+              "host": ["{{baseUrl}}"],
+              "path": [
+                "api",
+                "v1",
+                "reminder-batches",
+                "{{reminderBatchId}}",
+                "build"
+              ]
+            },
+            "description": "Requires ACCOUNT_SERVICE_URL + ACCOUNTS_API_KEY on subscription-service. Writes reminderbatchmembers."
+          }
+        },
+        {
+          "name": "Execute reminder batch",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/reminder-batches/{{reminderBatchId}}/execute",
+              "host": ["{{baseUrl}}"],
+              "path": [
+                "api",
+                "v1",
+                "reminder-batches",
+                "{{reminderBatchId}}",
+                "execute"
+              ]
+            },
+            "description": "Batch must be ready. Side-effects on subscriptions + events for cancellation."
           }
         }
       ]

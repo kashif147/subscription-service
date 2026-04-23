@@ -1,0 +1,222 @@
+{
+  "info": {
+    "name": "Year-end renewal batches (CRM)",
+    "description": "Year-end / renewal batch APIs on subscription-service at /api/v1/renewalBatches. Requires CRM: JWT must include userType \"CRM\", or gateway headers with x-user-type: CRM.\n\nSet subscriptionBaseUrl (e.g. http://localhost:4000). Set tenantId and authToken for Bearer flow, or use the Gateway folder with a valid gateway signature if your environment validates x-jwt-verified.\n\nAfter POST create, the test script stores data._id into collection variable renewalBatchId. Preview runs async (DRAFT→READY); poll GET by id until status is READY before POST execute.\n\nPOST execute returns 202 when queued (RABBIT_URL set) or when inline worker is used. GET events is text/event-stream (SSE); Postman may show a streaming response — use curl or a browser EventSource for full SSE testing.\n\nOptional: RABBIT_URL on the server for RabbitMQ-backed execute.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "subscriptionBaseUrl", "value": "http://localhost:4000", "type": "string" },
+    { "key": "authToken", "value": "", "type": "string" },
+    { "key": "tenantId", "value": "", "type": "string" },
+    { "key": "renewalBatchId", "value": "", "type": "string" },
+    { "key": "gatewayUserId", "value": "00000000-0000-0000-0000-000000000001", "type": "string" },
+    { "key": "gatewayUserEmail", "value": "crm.user@example.com", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Bearer (direct to subscription-service)",
+      "item": [
+        {
+          "name": "POST create renewal batch (DRAFT → preview → READY)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  try {",
+                  "    const j = pm.response.json();",
+                  "    const id = j.data && (j.data._id || j.data.id);",
+                  "    if (id) pm.collectionVariables.set('renewalBatchId', id);",
+                  "  } catch (e) {}",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{authToken}}" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-tenant-id", "value": "{{tenantId}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"FY 2025 year-end\",\n  \"fiscalYear\": 2025\n}"
+            },
+            "url": {
+              "raw": "{{subscriptionBaseUrl}}/api/v1/renewalBatches",
+              "host": ["{{subscriptionBaseUrl}}"],
+              "path": ["api", "v1", "renewalBatches"]
+            },
+            "description": "JWT payload must include userType: \"CRM\" and tenantId (or tid) matching x-tenant-id. Response 201 with batch in DRAFT; preview runs in background — poll GET until status is READY (or FAILED)."
+          }
+        },
+        {
+          "name": "GET renewal batch by id (metrics + memberIdsByAction)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{authToken}}" },
+              { "key": "x-tenant-id", "value": "{{tenantId}}" }
+            ],
+            "url": {
+              "raw": "{{subscriptionBaseUrl}}/api/v1/renewalBatches/{{renewalBatchId}}",
+              "host": ["{{subscriptionBaseUrl}}"],
+              "path": ["api", "v1", "renewalBatches", "{{renewalBatchId}}"]
+            },
+            "description": "Returns batch document, metrics (toArchive, toSuspend, toRenew), memberIdsByAction (ARCHIVE / SUSPEND / RENEW arrays)."
+          }
+        },
+        {
+          "name": "POST execute renewal batch (READY → QUEUED → …)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{authToken}}" },
+              { "key": "x-tenant-id", "value": "{{tenantId}}" }
+            ],
+            "url": {
+              "raw": "{{subscriptionBaseUrl}}/api/v1/renewalBatches/{{renewalBatchId}}/execute",
+              "host": ["{{subscriptionBaseUrl}}"],
+              "path": ["api", "v1", "renewalBatches", "{{renewalBatchId}}", "execute"]
+            },
+            "description": "Only when status is READY. Returns 202 with batch in QUEUED if Redis queue succeeds, or starts inline worker. 409 if another batch is QUEUED/INPROGRESS for the tenant. 503 if queue add fails after rollback to READY."
+          }
+        },
+        {
+          "name": "GET renewal batch SSE (events stream)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{authToken}}" },
+              { "key": "x-tenant-id", "value": "{{tenantId}}" },
+              { "key": "Accept", "value": "text/event-stream" }
+            ],
+            "url": {
+              "raw": "{{subscriptionBaseUrl}}/api/v1/renewalBatches/{{renewalBatchId}}/events",
+              "host": ["{{subscriptionBaseUrl}}"],
+              "path": ["api", "v1", "renewalBatches", "{{renewalBatchId}}", "events"]
+            },
+            "description": "Server-Sent Events (text/event-stream). Snapshot first, then events on status/step changes; heartbeats ~15s. Postman may not ideal for long-lived streams — try curl -N -H \"Authorization: Bearer …\" URL."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Gateway headers (trust gateway JWT verification)",
+      "item": [
+        {
+          "name": "POST create renewal batch",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  try {",
+                  "    const j = pm.response.json();",
+                  "    const id = j.data && (j.data._id || j.data.id);",
+                  "    if (id) pm.collectionVariables.set('renewalBatchId', id);",
+                  "  } catch (e) {}",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-jwt-verified", "value": "true" },
+              { "key": "x-auth-source", "value": "gateway" },
+              { "key": "x-user-id", "value": "{{gatewayUserId}}" },
+              { "key": "x-tenant-id", "value": "{{tenantId}}" },
+              { "key": "x-user-email", "value": "{{gatewayUserEmail}}" },
+              { "key": "x-user-type", "value": "CRM" },
+              { "key": "x-user-roles", "value": "[]" },
+              { "key": "x-user-permissions", "value": "[]" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"FY 2025 year-end\",\n  \"fiscalYear\": 2025\n}"
+            },
+            "url": {
+              "raw": "{{subscriptionBaseUrl}}/api/v1/renewalBatches",
+              "host": ["{{subscriptionBaseUrl}}"],
+              "path": ["api", "v1", "renewalBatches"]
+            },
+            "description": "Requires policy-middleware gateway validation (signature / IP) to succeed when calling subscription-service directly; usually used when Postman targets the gateway URL instead."
+          }
+        },
+        {
+          "name": "GET renewal batch by id",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "x-jwt-verified", "value": "true" },
+              { "key": "x-auth-source", "value": "gateway" },
+              { "key": "x-user-id", "value": "{{gatewayUserId}}" },
+              { "key": "x-tenant-id", "value": "{{tenantId}}" },
+              { "key": "x-user-email", "value": "{{gatewayUserEmail}}" },
+              { "key": "x-user-type", "value": "CRM" },
+              { "key": "x-user-roles", "value": "[]" },
+              { "key": "x-user-permissions", "value": "[]" }
+            ],
+            "url": {
+              "raw": "{{subscriptionBaseUrl}}/api/v1/renewalBatches/{{renewalBatchId}}",
+              "host": ["{{subscriptionBaseUrl}}"],
+              "path": ["api", "v1", "renewalBatches", "{{renewalBatchId}}"]
+            }
+          }
+        },
+        {
+          "name": "POST execute renewal batch",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "x-jwt-verified", "value": "true" },
+              { "key": "x-auth-source", "value": "gateway" },
+              { "key": "x-user-id", "value": "{{gatewayUserId}}" },
+              { "key": "x-tenant-id", "value": "{{tenantId}}" },
+              { "key": "x-user-email", "value": "{{gatewayUserEmail}}" },
+              { "key": "x-user-type", "value": "CRM" },
+              { "key": "x-user-roles", "value": "[]" },
+              { "key": "x-user-permissions", "value": "[]" }
+            ],
+            "url": {
+              "raw": "{{subscriptionBaseUrl}}/api/v1/renewalBatches/{{renewalBatchId}}/execute",
+              "host": ["{{subscriptionBaseUrl}}"],
+              "path": ["api", "v1", "renewalBatches", "{{renewalBatchId}}", "execute"]
+            }
+          }
+        },
+        {
+          "name": "GET renewal batch SSE",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "x-jwt-verified", "value": "true" },
+              { "key": "x-auth-source", "value": "gateway" },
+              { "key": "x-user-id", "value": "{{gatewayUserId}}" },
+              { "key": "x-tenant-id", "value": "{{tenantId}}" },
+              { "key": "x-user-email", "value": "{{gatewayUserEmail}}" },
+              { "key": "x-user-type", "value": "CRM" },
+              { "key": "x-user-roles", "value": "[]" },
+              { "key": "x-user-permissions", "value": "[]" },
+              { "key": "Accept", "value": "text/event-stream" }
+            ],
+            "url": {
+              "raw": "{{subscriptionBaseUrl}}/api/v1/renewalBatches/{{renewalBatchId}}/events",
+              "host": ["{{subscriptionBaseUrl}}"],
+              "path": ["api", "v1", "renewalBatches", "{{renewalBatchId}}", "events"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -50,26 +50,34 @@ async function publishSubscriptionCurrentUpdated(subscriptionDoc, ctx = {}) {
     subscriptionAttributes.processingDate = processingDateISO;
   }
 
+  const eventPayload = {
+    subscriptionId: subscriptionDoc._id.toString(),
+    profileId: profileIdObjectId.toString(),
+    applicationId: subscriptionAppId,
+    memberId: subscriptionMemberId,
+    userId: userId || null,
+    tenantId: tenantId || undefined,
+    effective: {
+      subscriptionDetails: {
+        membershipCategory: membershipCategory || null,
+        dateJoined: startDateISO,
+      },
+      professionalDetails: {
+        membershipCategory: membershipCategory || null,
+      },
+    },
+    subscriptionAttributes,
+  };
+  if (ctx.renewalBatchId != null && ctx.renewalBatchId !== "") {
+    eventPayload.renewalBatchId =
+      typeof ctx.renewalBatchId.toString === "function"
+        ? ctx.renewalBatchId.toString()
+        : String(ctx.renewalBatchId);
+  }
+
   const publishResult = await publisher.publish(
     MEMBERSHIP_EVENTS.SUBSCRIPTION_CURRENT_UPDATED,
-    {
-      subscriptionId: subscriptionDoc._id.toString(),
-      profileId: profileIdObjectId.toString(),
-      applicationId: subscriptionAppId,
-      memberId: subscriptionMemberId,
-      userId: userId || null,
-      tenantId: tenantId || undefined,
-      effective: {
-        subscriptionDetails: {
-          membershipCategory: membershipCategory || null,
-          dateJoined: startDateISO,
-        },
-        professionalDetails: {
-          membershipCategory: membershipCategory || null,
-        },
-      },
-      subscriptionAttributes,
-    },
+    eventPayload,
     {
       tenantId,
       correlationId: ctx.correlationId,

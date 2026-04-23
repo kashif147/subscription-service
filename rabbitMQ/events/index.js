@@ -13,6 +13,12 @@ const MEMBERSHIP_EVENTS = {
 	SUBSCRIPTION_CANCELLED: "members.subscription.cancelled.v1",
 	/** Published when cancellation grace period ends → user-service demotes portal user to NON-MEMBER */
 	SUBSCRIPTION_CANCEL_GRACE_ENDED: "members.subscription.cancel.grace.ended.v1",
+	REMINDER_BATCH_BUILD_REQUESTED: "members.reminder.batch.build.requested.v1",
+	REMINDER_BATCH_EXECUTE_REQUESTED: "members.reminder.batch.execute.requested.v1",
+	REMINDER_BATCH_MONTHLY_ORCHESTRATE_REQUESTED:
+		"members.reminder.batch.monthly.orchestrate.requested.v1",
+	REMINDER_BATCH_COMMS_REQUESTED: "members.reminder.batch.comms.requested.v1",
+	RENEWAL_BATCH_EXECUTE_REQUESTED: "members.renewal.batch.execute.requested.v1",
 };
 
 module.exports = {

@@ -57,6 +57,7 @@ const swaggerUi = require("swagger-ui-express");
 const swaggerSpecs = require("./config/swagger");
 
 const { mongooseConnection } = require("./config/db");
+require("./models");
 const session = require("express-session");
 
 const loggerMiddleware = require("./middlewares/logger.mw");

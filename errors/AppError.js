@@ -19,6 +19,14 @@ class AppError extends Error {
   static forbidden(message = "Access denied", extras = {}) {
     return new AppError(message, 403, "FORBIDDEN", extras);
   }
+
+  static conflict(message = "Conflict", extras = {}) {
+    return new AppError(message, 409, "CONFLICT", extras);
+  }
+
+  static serviceUnavailable(message = "Service unavailable", extras = {}) {
+    return new AppError(message, 503, "SERVICE_UNAVAILABLE", extras);
+  }
 }
 
 module.exports = { AppError };

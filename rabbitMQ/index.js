@@ -12,6 +12,8 @@ const {
 	handlePortalUserCreated,
 	handlePortalUserUpdated,
 } = require("./listeners/user.portal.listener");
+const { registerReminderBatchConsumers } = require("./listeners/reminderBatch.listener");
+const { registerRenewalBatchConsumers } = require("./listeners/renewalBatch.listener");
 
 // Custom logger wrapper to ensure RabbitMQ logs appear in Azure Log Stream
 // Maps logger.info() to console.log() so logs are visible
@@ -87,6 +89,8 @@ async function initEventSystem() {
 
 async function setupConsumers() {
 	await registerSubscriptionUpsertConsumer();
+	await registerReminderBatchConsumers();
+	await registerRenewalBatchConsumers();
 
 	// CRM user events queue (user.events exchange)
 	const USER_QUEUE = "subscription.user.events";

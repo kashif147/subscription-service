@@ -1,0 +1,178 @@
+{
+  "info": {
+    "name": "Reminder batches + eligibility",
+    "description": "CRM reminder-batch lifecycle on subscription-service (/api/v1/reminder-batches) and account-service internal eligibility used during build (/api/internal/members/...). Set subscriptionBaseUrl to subscription root (e.g. http://localhost:4000 or gateway .../subscription-service). Set accountBaseUrl to account-service root (e.g. http://localhost:4001). JWT must include userType CRM for subscription calls. See subscription-service README.md.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "subscriptionBaseUrl", "value": "http://localhost:4000", "type": "string" },
+    { "key": "accountBaseUrl", "value": "http://localhost:4000", "type": "string" },
+    { "key": "authToken", "value": "", "type": "string" },
+    { "key": "tenantId", "value": "", "type": "string" },
+    { "key": "accountsApiKey", "value": "", "type": "string" },
+    { "key": "memberId", "value": "", "type": "string" },
+    { "key": "reminderBatchId", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "1 — Account internal (eligibility)",
+      "item": [
+        {
+          "name": "GET reminder eligibility (single)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "x-tenant-id", "value": "{{tenantId}}" },
+              { "key": "x-api-key", "value": "{{accountsApiKey}}" }
+            ],
+            "url": {
+              "raw": "{{accountBaseUrl}}/api/internal/members/{{memberId}}/reminder-eligibility?asOf=",
+              "host": ["{{accountBaseUrl}}"],
+              "path": ["api", "internal", "members", "{{memberId}}", "reminder-eligibility"],
+              "query": [
+                {
+                  "key": "asOf",
+                  "value": "",
+                  "description": "Optional ISO; default now"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "POST reminder eligibility bulk",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-tenant-id", "value": "{{tenantId}}" },
+              { "key": "x-api-key", "value": "{{accountsApiKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"memberIds\": [\"{{memberId}}\"],\n  \"asOf\": \"2026-04-18T12:00:00.000Z\"\n}"
+            },
+            "url": {
+              "raw": "{{accountBaseUrl}}/api/internal/members/reminder-eligibility-bulk",
+              "host": ["{{accountBaseUrl}}"],
+              "path": ["api", "internal", "members", "reminder-eligibility-bulk"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2 — Subscription CRM (reminder batches)",
+      "item": [
+        {
+          "name": "POST create batch (REMINDER)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{authToken}}" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-tenant-id", "value": "{{tenantId}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"April 2026 reminder run\",\n  \"kind\": \"REMINDER\",\n  \"batchDate\": \"2026-04-18T12:00:00.000Z\",\n  \"referencePeriod\": \"2026-04\"\n}"
+            },
+            "url": {
+              "raw": "{{subscriptionBaseUrl}}/api/v1/reminder-batches",
+              "host": ["{{subscriptionBaseUrl}}"],
+              "path": ["api", "v1", "reminder-batches"]
+            }
+          }
+        },
+        {
+          "name": "GET list batches",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{authToken}}" },
+              { "key": "x-tenant-id", "value": "{{tenantId}}" }
+            ],
+            "url": {
+              "raw": "{{subscriptionBaseUrl}}/api/v1/reminder-batches?page=1&limit=20",
+              "host": ["{{subscriptionBaseUrl}}"],
+              "path": ["api", "v1", "reminder-batches"],
+              "query": [
+                { "key": "kind", "value": "", "disabled": true },
+                { "key": "status", "value": "", "disabled": true },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET batch by id",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{authToken}}" },
+              { "key": "x-tenant-id", "value": "{{tenantId}}" }
+            ],
+            "url": {
+              "raw": "{{subscriptionBaseUrl}}/api/v1/reminder-batches/{{reminderBatchId}}",
+              "host": ["{{subscriptionBaseUrl}}"],
+              "path": ["api", "v1", "reminder-batches", "{{reminderBatchId}}"]
+            }
+          }
+        },
+        {
+          "name": "GET batch members",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{authToken}}" },
+              { "key": "x-tenant-id", "value": "{{tenantId}}" }
+            ],
+            "url": {
+              "raw": "{{subscriptionBaseUrl}}/api/v1/reminder-batches/{{reminderBatchId}}/members?page=1&limit=50",
+              "host": ["{{subscriptionBaseUrl}}"],
+              "path": ["api", "v1", "reminder-batches", "{{reminderBatchId}}", "members"],
+              "query": [
+                { "key": "tier", "value": "", "disabled": true },
+                { "key": "included", "value": "", "disabled": true },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "50" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "POST build batch",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{authToken}}" },
+              { "key": "x-tenant-id", "value": "{{tenantId}}" }
+            ],
+            "url": {
+              "raw": "{{subscriptionBaseUrl}}/api/v1/reminder-batches/{{reminderBatchId}}/build",
+              "host": ["{{subscriptionBaseUrl}}"],
+              "path": ["api", "v1", "reminder-batches", "{{reminderBatchId}}", "build"]
+            },
+            "description": "Subscription-service must have ACCOUNT_SERVICE_URL and ACCOUNTS_API_KEY."
+          }
+        },
+        {
+          "name": "POST execute batch",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{authToken}}" },
+              { "key": "x-tenant-id", "value": "{{tenantId}}" }
+            ],
+            "url": {
+              "raw": "{{subscriptionBaseUrl}}/api/v1/reminder-batches/{{reminderBatchId}}/execute",
+              "host": ["{{subscriptionBaseUrl}}"],
+              "path": ["api", "v1", "reminder-batches", "{{reminderBatchId}}", "execute"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
