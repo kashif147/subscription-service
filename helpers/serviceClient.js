@@ -66,6 +66,22 @@ function buildServiceHeaders(req, tenantId) {
   return headers;
 }
 
+/**
+ * Headers for account-service /api/* (e.g. POST /api/payments/batch).
+ * Same base as {@link buildServiceHeaders} (profile batch / cross-service) — forward
+ * `authorization`, `x-jwt-verified` + `x-auth-source: gateway`, `x-tenant-id`, `x-user-*`
+ * so account-service `ensureAuthenticated` can validate like other gateway-sourced calls.
+ * Optional: if `ACCOUNTS_API_KEY` is set, add `x-api-key` (account routes accept key OR JWT;
+ * use key for workers/RabbitMQ that have no user token).
+ */
+function buildAccountServiceRequestHeaders(req, tenantId) {
+  const base = buildServiceHeaders(req, tenantId);
+  const key = process.env.ACCOUNTS_API_KEY || "";
+  if (key) {
+    return { ...base, "x-api-key": key };
+  }
+  return base;
+}
 
 /**
  * Fetch profiles by profile IDs (not user IDs - userId can be null on subscription).
@@ -131,10 +147,10 @@ async function fetchPaymentsByMemberIds(membershipNumbers, tenantId, req) {
   }
 
   try {
+    // Omit purpose: account-service then returns all succeeded member payments; we split by purpose in calculateFinancialDetails.
     const payload = {
       memberIds: membershipNumbers,
-      status: 'succeeded',
-      purpose: 'subscriptionFee',
+      status: "succeeded",
     };
     const postUrl = `${ACCOUNT_SERVICE_URL}/api/payments/batch`;
 
@@ -144,7 +160,7 @@ async function fetchPaymentsByMemberIds(membershipNumbers, tenantId, req) {
     console.log(`[Gateway Aggregation] memberIds count: ${membershipNumbers.length}, tenantId: ${tenantId || req?.headers?.['x-tenant-id'] || 'none'}`);
     console.log(`[Gateway Aggregation] memberIds (first 3): ${membershipNumbers.slice(0, 3).join(', ')}${membershipNumbers.length > 3 ? '...' : ''}`);
 
-    const headers = buildServiceHeaders(req, tenantId);
+    const headers = buildAccountServiceRequestHeaders(req, tenantId);
     const response = await axios.post(postUrl, payload, {
       headers,
       timeout: 5000,
@@ -176,16 +192,24 @@ function calculateFinancialDetails(payments, membershipCategory) {
   );
 
   const lastPayment = sortedPayments[0];
-  const totalPaid = sortedPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
+  const subPayments = sortedPayments.filter((p) => p.purpose === "subscriptionFee");
+  // account-service stores Payment.amount in integer cents; outstanding uses subscription fee payments only
+  const totalPaidCents = subPayments.reduce(
+    (sum, p) => sum + (Number(p.amount) || 0),
+    0
+  );
 
-  // Get membership fee based on category
+  // Get membership fee based on category (euros, display)
   const membershipFee = getMembershipFeeByCategory(membershipCategory);
 
-  // Calculate outstanding balance
-  const outstandingBalance = Math.max(0, membershipFee - totalPaid);
+  const totalPaidEur = totalPaidCents / 100;
+  const outstandingBalance = Math.max(0, membershipFee - totalPaidEur);
+  const lastEur = lastPayment?.amount != null
+    ? (Number(lastPayment.amount) || 0) / 100
+    : null;
 
   return {
-    lastPaymentAmount: lastPayment?.amount || null,
+    lastPaymentAmount: lastEur,
     lastPaymentDate: lastPayment?.createdAt || null,
     membershipFee,
     outstandingBalance,
@@ -218,11 +242,12 @@ function buildProfileMap(profiles) {
 function buildPaymentMap(payments) {
   const map = new Map();
   (payments || []).forEach(payment => {
-    if (payment.memberId) {
-      if (!map.has(payment.memberId)) {
-        map.set(payment.memberId, []);
+    const key = payment.memberId != null ? String(payment.memberId).trim() : "";
+    if (key) {
+      if (!map.has(key)) {
+        map.set(key, []);
       }
-      map.get(payment.memberId).push(payment);
+      map.get(key).push(payment);
     }
   });
   return map;

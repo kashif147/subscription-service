@@ -173,8 +173,8 @@ async function enhanceSubscriptionsWithAggregation(subscriptions, req) {
       subscriptions.map(async (subscription) => {
         const profile = profileMap.get(subscription.profileId.toString());
         const portalUser = portalUserMap.get(subscription._id.toString());
-        const memberPayments = profile?.membershipNumber 
-          ? paymentMap.get(profile.membershipNumber) || []
+        const memberPayments = profile?.membershipNumber
+          ? paymentMap.get(String(profile.membershipNumber).trim()) || []
           : [];
 
         // Calculate financial details
