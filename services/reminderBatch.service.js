@@ -137,6 +137,26 @@ async function listReminderBatches(req, query) {
     ReminderBatch.countDocuments(q),
   ]);
 
+  const creatorIds = [
+    ...new Set(
+      items.map((b) => b.createdBy).filter((id) => id != null)
+    ),
+  ];
+  const byId = new Map();
+  if (creatorIds.length) {
+    const users = await User.find({ _id: { $in: creatorIds } })
+      .select("userEmail userFullName")
+      .lean();
+    for (const u of users) {
+      byId.set(String(u._id), u);
+    }
+  }
+  for (const item of items) {
+    const c = item.createdBy && byId.get(String(item.createdBy));
+    item.userEmail = c?.userEmail ?? null;
+    item.userFullName = c?.userFullName ?? null;
+  }
+
   return { items, total, page: p, limit: l };
 }
 
