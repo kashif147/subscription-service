@@ -7,7 +7,7 @@ exports.REMINDER_BATCH_EXCLUDED_MEMBERSHIP_CATEGORIES = [
   "honorary",
 ];
 
-/** Minimum 1400 arrears bucket (cents) to treat as materially delinquent for Reminder 1. */
+/** Minimum 1400 balance (cents): sum of **arrears** + **current** buckets — to treat as materially delinquent. */
 exports.REMINDER_BATCH_MIN_BALANCE_CENTS = 1;
 
 /** Days since last Receipt before Reminder-1 style delinquency (calendar days). */

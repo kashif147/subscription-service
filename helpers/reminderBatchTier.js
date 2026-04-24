@@ -39,9 +39,15 @@ function paymentAfterPreviousBatch(lastReceiptIso, previousExecuteCompletedAt) {
   return r > p;
 }
 
-function isFinanciallyDelinquent(snap, asOf) {
+/** Net amount owed on 1400: materialized arrears + current (both credit member liability). */
+function net1400OwedCents(snap) {
   const ar = Number(snap?.net1400ArrearsCents) || 0;
-  if (ar < REMINDER_BATCH_MIN_BALANCE_CENTS) return false;
+  const cur = Number(snap?.net1400CurrentCents) || 0;
+  return ar + cur;
+}
+
+function isFinanciallyDelinquent(snap, asOf) {
+  if (net1400OwedCents(snap) < REMINDER_BATCH_MIN_BALANCE_CENTS) return false;
   const last = snap?.lastReceiptGlDate ? new Date(snap.lastReceiptGlDate) : null;
   const as = asOf instanceof Date ? asOf : new Date(asOf);
   if (Number.isNaN(as.getTime())) return false;
@@ -99,5 +105,6 @@ module.exports = {
   classifyMaxReminderTier,
   classifyCancellationTier,
   isFinanciallyDelinquent,
+  net1400OwedCents,
   paymentAfterPreviousBatch,
 };
