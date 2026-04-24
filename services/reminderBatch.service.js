@@ -22,10 +22,14 @@ const {
   fetchProfilesByIds,
   fetchReminderEligibilityBulk,
   createInternalWorkerReq,
+  getExpectedAnnualFeeCents,
 } = require("../helpers/serviceClient");
 const {
   classifyMaxReminderTier,
   classifyCancellationTier,
+  getReminderMinBalanceCentsForCalendarYear,
+  daysInCalendarYear,
+  reminderTierAnchorDate,
 } = require("../helpers/reminderBatchTier");
 const { AppError } = require("../errors/AppError");
 const { publisher } = require("@projectShell/rabbitmq-middleware");
@@ -80,12 +84,27 @@ async function resolveCrmUserObjectId(req) {
   return crmUser?._id || null;
 }
 
-async function findPreviousCompletedBatch(tenantId, kind) {
+function isExecuteCompletedInUtcCalendarYear(executeAt, forYear) {
+  if (executeAt == null || !Number.isFinite(forYear)) return false;
+  const e = executeAt instanceof Date ? executeAt : new Date(executeAt);
+  if (Number.isNaN(e.getTime())) return false;
+  return e.getUTCFullYear() === forYear;
+}
+
+/**
+ * Most recent completed batch of this kind with `executeCompletedAt` in the given **UTC
+ * calendar year** only. Stops a prior-December (or any prior-year) run from anchoring
+ * the first batch of the new year (e.g. clean R1 in April).
+ */
+async function findPreviousCompletedBatchInCalendarYear(tenantId, kind, forYear) {
+  if (!Number.isFinite(forYear)) return null;
+  const from = new Date(Date.UTC(forYear, 0, 1, 0, 0, 0, 0));
+  const to = new Date(Date.UTC(forYear + 1, 0, 1, 0, 0, 0, 0));
   return ReminderBatch.findOne({
     tenantId,
     kind,
     status: REMINDER_BATCH_STATUS.COMPLETED,
-    executeCompletedAt: { $ne: null },
+    executeCompletedAt: { $ne: null, $gte: from, $lt: to },
   })
     .sort({ executeCompletedAt: -1 })
     .lean();
@@ -195,6 +214,8 @@ async function listReminderBatchMembers(req, batchId, query) {
 
 /**
  * Start build: status, timestamps, clear prior members, init progress.
+ * `prevExecuteAt` is the latest completed same-kind batch **in the current UTC calendar year
+ * of `asOf`**, so prior-year completed batches do not anchor the new year’s first R1 list.
  * @returns {{ batch: import('mongoose').Document, asOf: Date, prevExecuteAt: Date | null, req: object }}
  */
 async function beginBuildReminderBatch(batchId, tenantId, req) {
@@ -240,18 +261,48 @@ async function beginBuildReminderBatch(batchId, tenantId, req) {
   };
   batch.executeProgress = batch.executeProgress || {};
 
+  const calendarYear = asOf.getUTCFullYear();
   let prevExecuteAt = null;
   if (batch.kind === REMINDER_BATCH_KIND.REMINDER) {
-    const prev = batch.previousReminderBatchId
-      ? await ReminderBatch.findById(batch.previousReminderBatchId).lean()
-      : await findPreviousCompletedBatch(tenantId, REMINDER_BATCH_KIND.REMINDER);
-    if (prev?.executeCompletedAt) prevExecuteAt = new Date(prev.executeCompletedAt);
+    let prev = null;
+    if (batch.previousReminderBatchId) {
+      const linked = await ReminderBatch.findById(
+        batch.previousReminderBatchId
+      ).lean();
+      if (
+        linked?.executeCompletedAt &&
+        isExecuteCompletedInUtcCalendarYear(
+          linked.executeCompletedAt,
+          calendarYear
+        )
+      ) {
+        prev = linked;
+      } else {
+        prev = await findPreviousCompletedBatchInCalendarYear(
+          tenantId,
+          REMINDER_BATCH_KIND.REMINDER,
+          calendarYear
+        );
+      }
+    } else {
+      prev = await findPreviousCompletedBatchInCalendarYear(
+        tenantId,
+        REMINDER_BATCH_KIND.REMINDER,
+        calendarYear
+      );
+    }
+    if (prev?.executeCompletedAt) {
+      prevExecuteAt = new Date(prev.executeCompletedAt);
+    }
   } else {
-    const prev = await findPreviousCompletedBatch(
+    const prev = await findPreviousCompletedBatchInCalendarYear(
       tenantId,
-      REMINDER_BATCH_KIND.CANCELLATION
+      REMINDER_BATCH_KIND.CANCELLATION,
+      calendarYear
     );
-    if (prev?.executeCompletedAt) prevExecuteAt = new Date(prev.executeCompletedAt);
+    if (prev?.executeCompletedAt) {
+      prevExecuteAt = new Date(prev.executeCompletedAt);
+    }
   }
 
   batch.buildContextPrevExecuteAt = prevExecuteAt || null;
@@ -320,19 +371,45 @@ async function processBuildSubscriptionChunk({
   }
 
   const bulkDocs = [];
+  const proRataCalendarYear = new Date().getUTCFullYear();
+  const proRataYearDayCount = daysInCalendarYear(proRataCalendarYear);
+  const reminderTierAnchor = reminderTierAnchorDate(prevExecuteAt);
+
   for (const { sub, profile, memberId } of memberRows) {
     const snap = snapByMember.get(memberId) || {};
+    const feeExpectedCents = getExpectedAnnualFeeCents(sub.membershipCategory);
     const eligibilitySnapshot = {
       ...snap,
       ruleVersion: REMINDER_BATCH_RULE_VERSION_DEFAULT,
-      feeExpectedCents: null,
+      feeExpectedCents: feeExpectedCents || null,
+      feeProRataCalendarYear: proRataCalendarYear,
+      feeProRataYearDayCount: proRataYearDayCount,
+      reminderMinBalanceCents: getReminderMinBalanceCentsForCalendarYear(
+        sub.membershipCategory,
+        proRataCalendarYear
+      ),
+      reminderTierAnchorAt: reminderTierAnchor
+        ? reminderTierAnchor.toISOString()
+        : null,
     };
 
     let tier = null;
     if (batchDoc.kind === REMINDER_BATCH_KIND.REMINDER) {
-      tier = classifyMaxReminderTier(sub, snap, asOf, prevExecuteAt);
+      tier = classifyMaxReminderTier(
+        sub,
+        snap,
+        asOf,
+        prevExecuteAt,
+        proRataCalendarYear
+      );
     } else {
-      tier = classifyCancellationTier(sub, snap, asOf, prevExecuteAt);
+      tier = classifyCancellationTier(
+        sub,
+        snap,
+        asOf,
+        prevExecuteAt,
+        proRataCalendarYear
+      );
     }
 
     if (!tier) {

@@ -7,10 +7,15 @@ exports.REMINDER_BATCH_EXCLUDED_MEMBERSHIP_CATEGORIES = [
   "honorary",
 ];
 
-/** Minimum 1400 balance (cents): sum of **arrears** + **current** buckets — to treat as materially delinquent. */
+/**
+ * Floor (cents) when category annual fee is unknown (no row in fee map).
+ */
 exports.REMINDER_BATCH_MIN_BALANCE_CENTS = 1;
 
-/** Days since last Receipt before Reminder-1 style delinquency (calendar days). */
+/**
+ * Days in the pro-rata formula: min balance ≈ (annualFee/this) × REMINDER_BATCH_DELINQUENCY_DAYS.
+ * Also: calendar days since last receipt for delinquency when a receipt exists.
+ */
 exports.REMINDER_BATCH_DELINQUENCY_DAYS = 90;
 
 /** Max memberIds per account-service bulk eligibility call. */

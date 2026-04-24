@@ -3,6 +3,7 @@ const {
   REMINDER_BATCH_DELINQUENCY_DAYS,
 } = require("../constants/reminderBatch.constants");
 const { REMINDER_BATCH_TIER } = require("../constants/enums");
+const { getExpectedAnnualFeeCents } = require("./serviceClient");
 
 /** Batch pipeline state on subscription (`reminders` subdoc object). */
 function remindersState(subLean) {
@@ -11,16 +12,21 @@ function remindersState(subLean) {
   return {};
 }
 
-function utcStartOfMonth(d) {
-  const x = d instanceof Date ? d : new Date(d);
-  if (Number.isNaN(x.getTime())) return null;
-  return new Date(Date.UTC(x.getUTCFullYear(), x.getUTCMonth(), 1));
-}
-
-function utcPrevMonthStart(asOf) {
-  const s = utcStartOfMonth(asOf);
-  if (!s) return null;
-  return new Date(Date.UTC(s.getUTCFullYear(), s.getUTCMonth() - 1, 1));
+/**
+ * Cutoff for R2 / R3 tier steps: last **same-kind** completed batch
+ * `executeCompletedAt` only. `null` if this is the first such batch in history (e.g. first
+ * April reminder run) — there is no calendar-month fallback.
+ * @param {Date|string|null|undefined} previousExecuteCompletedAt
+ * @returns {Date|null}
+ */
+function reminderTierAnchorDate(previousExecuteCompletedAt) {
+  if (previousExecuteCompletedAt == null) return null;
+  const p =
+    previousExecuteCompletedAt instanceof Date
+      ? previousExecuteCompletedAt
+      : new Date(previousExecuteCompletedAt);
+  if (Number.isNaN(p.getTime())) return null;
+  return p;
 }
 
 function calendarDaysBetween(fromDate, toDate) {
@@ -39,6 +45,18 @@ function paymentAfterPreviousBatch(lastReceiptIso, previousExecuteCompletedAt) {
   return r > p;
 }
 
+/**
+ * Calendar days in `year` (1 Jan through 31 Dec) — 365, or 366 in a leap year. Uses UTC.
+ * @param {number} year - full year (e.g. 2024)
+ * @returns {number}
+ */
+function daysInCalendarYear(year) {
+  if (!Number.isFinite(year)) return 365;
+  return Math.round(
+    (Date.UTC(year + 1, 0, 1) - Date.UTC(year, 0, 1)) / 86400000
+  );
+}
+
 /** Net amount owed on 1400: materialized arrears + current (both credit member liability). */
 function net1400OwedCents(snap) {
   const ar = Number(snap?.net1400ArrearsCents) || 0;
@@ -46,11 +64,53 @@ function net1400OwedCents(snap) {
   return ar + cur;
 }
 
-function isFinanciallyDelinquent(snap, asOf) {
-  if (net1400OwedCents(snap) < REMINDER_BATCH_MIN_BALANCE_CENTS) return false;
-  const last = snap?.lastReceiptGlDate ? new Date(snap.lastReceiptGlDate) : null;
+/**
+ * Pro-rata min 1400 (cents) for a **calendar year** (365 or 366 days in that year).
+ * Unknown category (no fee in map) falls back to {@link REMINDER_BATCH_MIN_BALANCE_CENTS}.
+ * @param {string|null|undefined} membershipCategory
+ * @param {number} calendarYear
+ */
+function getReminderMinBalanceCentsForCalendarYear(membershipCategory, calendarYear) {
+  const annualCents = getExpectedAnnualFeeCents(membershipCategory);
+  if (!annualCents) return REMINDER_BATCH_MIN_BALANCE_CENTS;
+  if (!Number.isFinite(calendarYear)) return REMINDER_BATCH_MIN_BALANCE_CENTS;
+  const yearDays = daysInCalendarYear(calendarYear);
+  const d = Number(REMINDER_BATCH_DELINQUENCY_DAYS) || 90;
+  const proRataCents = Math.round((annualCents / yearDays) * d);
+  return Math.max(REMINDER_BATCH_MIN_BALANCE_CENTS, proRataCents);
+}
+
+/**
+ * Pro-rata min using the **current** calendar year in UTC (when batch logic runs), not the balance `asOf` date.
+ */
+function getReminderMinBalanceCents(membershipCategory) {
+  return getReminderMinBalanceCentsForCalendarYear(
+    membershipCategory,
+    new Date().getUTCFullYear()
+  );
+}
+
+/**
+ * @param {number} [proRataCalendarYear] - if set, min balance uses this year (e.g. batch run year); else `new Date()`.
+ */
+function isFinanciallyDelinquent(
+  snap,
+  asOf,
+  membershipCategory,
+  proRataCalendarYear
+) {
   const as = asOf instanceof Date ? asOf : new Date(asOf);
   if (Number.isNaN(as.getTime())) return false;
+  const minCents = Number.isFinite(proRataCalendarYear)
+    ? getReminderMinBalanceCentsForCalendarYear(
+        membershipCategory,
+        proRataCalendarYear
+      )
+    : getReminderMinBalanceCents(membershipCategory);
+  if (net1400OwedCents(snap) < minCents) {
+    return false;
+  }
+  const last = snap?.lastReceiptGlDate ? new Date(snap.lastReceiptGlDate) : null;
   if (!last || Number.isNaN(last.getTime())) return true;
   const days = calendarDaysBetween(last, as);
   return days != null && days >= REMINDER_BATCH_DELINQUENCY_DAYS;
@@ -60,15 +120,29 @@ function isFinanciallyDelinquent(snap, asOf) {
  * Highest tier for REMINDER kind batch (R1 / R2 / R3 tabs). Members with reminder3At already set
  * are excluded here — they belong on the cancellation batch only.
  */
-function classifyMaxReminderTier(subLean, snap, asOf, previousExecuteCompletedAt) {
+function classifyMaxReminderTier(
+  subLean,
+  snap,
+  asOf,
+  previousExecuteCompletedAt,
+  proRataCalendarYear
+) {
   const a = asOf instanceof Date ? asOf : new Date(asOf);
   if (paymentAfterPreviousBatch(snap?.lastReceiptGlDate, previousExecuteCompletedAt)) {
     return null;
   }
-  if (!isFinanciallyDelinquent(snap, a)) return null;
+  if (
+    !isFinanciallyDelinquent(
+      snap,
+      a,
+      subLean?.membershipCategory,
+      proRataCalendarYear
+    )
+  ) {
+    return null;
+  }
 
-  const prevStart = utcPrevMonthStart(a);
-  if (!prevStart) return null;
+  const anchor = reminderTierAnchorDate(previousExecuteCompletedAt);
 
   const st = remindersState(subLean);
   const r1 = st.reminder1At ? new Date(st.reminder1At) : null;
@@ -77,34 +151,51 @@ function classifyMaxReminderTier(subLean, snap, asOf, previousExecuteCompletedAt
 
   if (r3) return null;
 
-  if (r2 && !r3 && r2 < prevStart) return REMINDER_BATCH_TIER.R3;
-  if (r1 && !r2 && r1 < prevStart) return REMINDER_BATCH_TIER.R2;
+  if (r2 && !r3 && anchor && r2 < anchor) return REMINDER_BATCH_TIER.R3;
+  if (r1 && !r2 && anchor && r1 < anchor) return REMINDER_BATCH_TIER.R2;
   if (!r1) return REMINDER_BATCH_TIER.R1;
   return null;
 }
 
 /** CANCEL tier for CANCELLATION kind batch */
-function classifyCancellationTier(subLean, snap, asOf, previousExecuteCompletedAt) {
+function classifyCancellationTier(
+  subLean,
+  snap,
+  asOf,
+  previousExecuteCompletedAt,
+  proRataCalendarYear
+) {
   const a = asOf instanceof Date ? asOf : new Date(asOf);
   if (paymentAfterPreviousBatch(snap?.lastReceiptGlDate, previousExecuteCompletedAt)) {
     return null;
   }
-  if (!isFinanciallyDelinquent(snap, a)) return null;
-  const prevStart = utcPrevMonthStart(a);
-  if (!prevStart) return null;
+  if (
+    !isFinanciallyDelinquent(
+      snap,
+      a,
+      subLean?.membershipCategory,
+      proRataCalendarYear
+    )
+  ) {
+    return null;
+  }
+  const anchor = reminderTierAnchorDate(previousExecuteCompletedAt);
   const st = remindersState(subLean);
   const r3 = st.reminder3At ? new Date(st.reminder3At) : null;
-  if (r3 && r3 < prevStart) return REMINDER_BATCH_TIER.CANCEL;
+  if (!r3) return null;
+  if (anchor == null || r3 < anchor) return REMINDER_BATCH_TIER.CANCEL;
   return null;
 }
 
 module.exports = {
-  utcStartOfMonth,
-  utcPrevMonthStart,
+  reminderTierAnchorDate,
   calendarDaysBetween,
+  daysInCalendarYear,
   classifyMaxReminderTier,
   classifyCancellationTier,
   isFinanciallyDelinquent,
+  getReminderMinBalanceCents,
+  getReminderMinBalanceCentsForCalendarYear,
   net1400OwedCents,
   paymentAfterPreviousBatch,
 };

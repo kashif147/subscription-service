@@ -216,17 +216,60 @@ function calculateFinancialDetails(payments, membershipCategory) {
   };
 }
 
-function getMembershipFeeByCategory(category) {
-  // Fee table (should ideally come from a config or database)
-  const FEE_TABLE = {
-    'FULL_TIME': 540.00,      // €45/month × 12
-    'PART_TIME': 360.00,      // €30/month × 12
-    'STUDENT': 120.00,        // €10/month × 12
-    'RETIRED': 60.00,         // €5/month × 12
-    'ASSOCIATE': 240.00,      // €20/month × 12
-  };
+const MEMBERSHIP_FEE_EUR_BY_KEY = {
+  FULL_TIME: 540.0, // €45/month × 12
+  PART_TIME: 360.0,
+  STUDENT: 120.0,
+  RETIRED: 60.0,
+  ASSOCIATE: 240.0,
+  /** e.g. subscription `membershipCategory` "General all grade" */
+  GENERAL_ALL_GRADE: 326.0,
+  /** e.g. "Private nursing" / private nursing */
+  PRIVATE_NURSING: 243.0,
+};
 
-  return FEE_TABLE[category] || 0;
+/** Maps normalized keys that might not match the canonical FEE key. */
+const MEMBERSHIP_FEE_KEY_ALIASES = {
+  FULLTIME: "FULL_TIME",
+  PARTTIME: "PART_TIME",
+  FT: "FULL_TIME",
+  PT: "PART_TIME",
+};
+
+/**
+ * "Full time", "full_time", "FULL-TIME" → "FULL_TIME"
+ * @param {string|null|undefined} category
+ * @returns {string}
+ */
+function normalizeMembershipCategoryKey(category) {
+  if (category == null || category === "") return "";
+  return String(category)
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, "_");
+}
+
+function getMembershipFeeByCategory(category) {
+  const norm = normalizeMembershipCategoryKey(category);
+  if (!norm) return 0;
+  const key = MEMBERSHIP_FEE_KEY_ALIASES[norm] || norm;
+  if (Object.prototype.hasOwnProperty.call(MEMBERSHIP_FEE_EUR_BY_KEY, key)) {
+    return MEMBERSHIP_FEE_EUR_BY_KEY[key];
+  }
+  if (Object.prototype.hasOwnProperty.call(MEMBERSHIP_FEE_EUR_BY_KEY, norm)) {
+    return MEMBERSHIP_FEE_EUR_BY_KEY[norm];
+  }
+  return 0;
+}
+
+/**
+ * @param {string|null|undefined} category
+ * @returns {number} expected annual fee in **euro cents** (integer)
+ */
+function getExpectedAnnualFeeCents(category) {
+  const eur = getMembershipFeeByCategory(category);
+  if (!eur || eur <= 0) return 0;
+  return Math.round(eur * 100);
 }
 
 function buildProfileMap(profiles) {
@@ -289,4 +332,6 @@ module.exports = {
   getMembershipFeeByCategory,
   buildProfileMap,
   buildPaymentMap,
+  normalizeMembershipCategoryKey,
+  getExpectedAnnualFeeCents,
 };
