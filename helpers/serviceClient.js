@@ -203,6 +203,15 @@ async function fetchPaymentsByMemberIds(membershipNumbers, tenantId, req) {
 async function fetchMemberSummariesByMemberIds(memberIds, tenantId, req) {
   if (!memberIds || memberIds.length === 0) return [];
   const uniqueMemberIds = [...new Set(memberIds.map((x) => String(x || "").trim()).filter(Boolean))];
+  const variantMap = new Map();
+  uniqueMemberIds.forEach((memberId) => {
+    variantMap.set(memberId, getMemberIdLookupKeys(memberId));
+  });
+  const uniqueLookupIds = [
+    ...new Set(
+      uniqueMemberIds.flatMap((memberId) => variantMap.get(memberId) || [])
+    ),
+  ];
   const headers = buildAccountServiceRequestHeaders(req, tenantId);
   const now = Date.now();
 
@@ -221,8 +230,13 @@ async function fetchMemberSummariesByMemberIds(memberIds, tenantId, req) {
   // Fetch batch in one request to avoid per-member API bursts and 429s.
   if (pendingIds.length > 0) {
     const chunks = [];
-    for (let i = 0; i < pendingIds.length; i += MEMBER_SUMMARY_BATCH_CHUNK_SIZE) {
-      chunks.push(pendingIds.slice(i, i + MEMBER_SUMMARY_BATCH_CHUNK_SIZE));
+    const pendingLookupIds = [
+      ...new Set(
+        pendingIds.flatMap((memberId) => variantMap.get(memberId) || [memberId])
+      ),
+    ];
+    for (let i = 0; i < pendingLookupIds.length; i += MEMBER_SUMMARY_BATCH_CHUNK_SIZE) {
+      chunks.push(pendingLookupIds.slice(i, i + MEMBER_SUMMARY_BATCH_CHUNK_SIZE));
     }
 
     const batchMap = new Map();
@@ -263,7 +277,8 @@ async function fetchMemberSummariesByMemberIds(memberIds, tenantId, req) {
     }
 
     pendingIds.forEach((memberId) => {
-      const summary = batchMap.get(memberId) || null;
+      const variants = variantMap.get(memberId) || [memberId];
+      const summary = variants.map((v) => batchMap.get(v)).find(Boolean) || null;
       memberSummaryCache.set(memberId, { at: Date.now(), data: summary });
       out.push({ memberId, summary });
     });
