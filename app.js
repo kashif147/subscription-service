@@ -128,17 +128,8 @@ app.use(express.json({ limit: "200mb" }));
 
 app.use(loggerMiddleware);
 
-// Avoid duplicate CORS headers when an upstream gateway/proxy already sets them.
-// Keep app-level CORS enabled by default only for local development.
-const enableAppCors =
-  (process.env.ENABLE_APP_CORS || "").toLowerCase() === "true" ||
-  (!process.env.ENABLE_APP_CORS && process.env.NODE_ENV !== "production");
-
-if (enableAppCors) {
-  app.use(handlePreflight);
-  app.use(corsMiddleware);
-  app.use(corsErrorHandler);
-}
+// CORS intentionally disabled at app layer for now.
+// Upstream gateway/proxy should be the single source of CORS headers.
 
 app.use(
   session({
