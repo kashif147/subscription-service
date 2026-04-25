@@ -63,8 +63,4 @@ TemplateSchema.index({ tenantId: 1, userId: 1, isDefault: 1 });
 TemplateSchema.index({ tenantId: 1, systemDefault: 1, "meta.deleted": 1 });
 TemplateSchema.index({ tenantId: 1, templateType: 1, systemDefault: 1 });
 
-module.exports = mongoose.model(
-  "SubscriptionFilterTemplate",
-  TemplateSchema,
-  "templates"
-);
+module.exports = mongoose.model("Template", TemplateSchema, "templates");
