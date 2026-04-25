@@ -148,7 +148,13 @@ class SubscriptionFilterTemplateService {
     return template;
   }
 
-  async updateTemplate(templateId, tenantId, userId, updateData) {
+  async updateTemplate(
+    templateId,
+    tenantId,
+    userId,
+    updateData,
+    allowSystemDefaultEdits = false,
+  ) {
     const {
       name,
       templateType,
@@ -185,7 +191,7 @@ class SubscriptionFilterTemplateService {
         ? normalizeTemplateType(templateType)
         : normalizeTemplateType(template.templateType);
 
-    if (template.systemDefault) {
+    if (template.systemDefault && !allowSystemDefaultEdits) {
       if (isDefault === true) {
         await Template.updateMany(
           {

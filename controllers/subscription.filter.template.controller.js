@@ -181,7 +181,8 @@ exports.updateTemplate = async (req, res) => {
       req.params.templateId,
       ctx.tenantId,
       ctx.userId,
-      validated
+      validated,
+      canEditSystemDefaultTemplate(req)
     );
     return res.success(template);
   } catch (error) {
