@@ -1342,8 +1342,17 @@ async function getSubscriptionsWithTemplate(req, res) {
       throw err;
     }
 
-    const filters = template.filters || {};
-    const columns = template.columns || [];
+    const filters =
+      req.body &&
+      req.body.filters &&
+      typeof req.body.filters === "object" &&
+      !Array.isArray(req.body.filters)
+        ? req.body.filters
+        : template.filters || {};
+    const columns =
+      Array.isArray(req.body?.columns) && req.body.columns.length > 0
+        ? req.body.columns
+        : template.columns || [];
 
     const query = buildSubscriptionMongoQueryFromTemplateFilters(
       filters,
@@ -1371,7 +1380,7 @@ async function getSubscriptionsWithTemplate(req, res) {
     });
 
     return res.success({
-      filter: template.filters || {},
+      filter: filters,
       columns,
       templateId: template._id,
       isDefault: !!template.isDefault,
