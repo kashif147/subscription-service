@@ -3,8 +3,13 @@ const axios = require('axios');
 const PROFILE_SERVICE_URL = process.env.PROFILE_SERVICE_URL || 'http://projectshell-vm.northeurope.cloudapp.azure.com/profile-service';
 const ACCOUNT_SERVICE_URL = process.env.ACCOUNT_SERVICE_URL || 'http://projectshell-vm.northeurope.cloudapp.azure.com/account-service';
 const MEMBER_SUMMARY_CACHE_TTL_MS = 60 * 1000;
-const MEMBER_SUMMARY_MAX_CONCURRENCY = 2;
+const MEMBER_SUMMARY_MAX_RETRIES = 2;
+const MEMBER_SUMMARY_BATCH_CHUNK_SIZE = 1000;
 const memberSummaryCache = new Map();
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 /** Minimal request shape for internal async workers (RabbitMQ/event consumers). */
 function createInternalWorkerReq(tenantId, actor = {}) {
@@ -213,24 +218,55 @@ async function fetchMemberSummariesByMemberIds(memberIds, tenantId, req) {
     pendingIds.push(memberId);
   });
 
-  // Fetch with low concurrency to avoid account-service 429 rate limits.
-  for (let i = 0; i < pendingIds.length; i += MEMBER_SUMMARY_MAX_CONCURRENCY) {
-    const chunk = pendingIds.slice(i, i + MEMBER_SUMMARY_MAX_CONCURRENCY);
-    const chunkResults = await Promise.all(
-      chunk.map(async (memberId) => {
+  // Fetch batch in one request to avoid per-member API bursts and 429s.
+  if (pendingIds.length > 0) {
+    const chunks = [];
+    for (let i = 0; i < pendingIds.length; i += MEMBER_SUMMARY_BATCH_CHUNK_SIZE) {
+      chunks.push(pendingIds.slice(i, i + MEMBER_SUMMARY_BATCH_CHUNK_SIZE));
+    }
+
+    const batchMap = new Map();
+    for (const memberIdChunk of chunks) {
+      let attempt = 0;
+      let batchItems = null;
+      while (attempt <= MEMBER_SUMMARY_MAX_RETRIES) {
         try {
-          const url = `${ACCOUNT_SERVICE_URL}/api/reports/member/${encodeURIComponent(memberId)}/summary`;
-          const response = await axios.get(url, { headers, timeout: 8000 });
-          const summary = response.data?.data || response.data || null;
-          memberSummaryCache.set(memberId, { at: Date.now(), data: summary });
-          return { memberId, summary };
+          const url = `${ACCOUNT_SERVICE_URL}/api/reports/members/summary-batch`;
+          const response = await axios.post(
+            url,
+            { memberIds: memberIdChunk, scope: "all" },
+            { headers, timeout: 20000 }
+          );
+          batchItems = response.data?.data?.items || [];
+          break;
         } catch (error) {
-          // Graceful fallback: on 429 (or any error), skip summary and let caller use computed fallback.
-          return { memberId, summary: null };
+          const status = error?.response?.status;
+          if (status === 429 && attempt < MEMBER_SUMMARY_MAX_RETRIES) {
+            const retryAfterHeader = Number(error?.response?.headers?.["retry-after"]);
+            const waitMs = Number.isFinite(retryAfterHeader) && retryAfterHeader > 0
+              ? retryAfterHeader * 1000
+              : 400 * Math.pow(2, attempt);
+            await sleep(waitMs);
+            attempt += 1;
+            continue;
+          }
+          batchItems = [];
+          break;
         }
-      })
-    );
-    out.push(...chunkResults);
+      }
+
+      (batchItems || []).forEach((row) => {
+        const memberId = String(row?.memberId || "").trim();
+        if (!memberId) return;
+        batchMap.set(memberId, row);
+      });
+    }
+
+    pendingIds.forEach((memberId) => {
+      const summary = batchMap.get(memberId) || null;
+      memberSummaryCache.set(memberId, { at: Date.now(), data: summary });
+      out.push({ memberId, summary });
+    });
   }
 
   return out;
