@@ -26,12 +26,19 @@ function canEditSystemDefaultTemplate(req) {
       ? req.user.roles
       : [];
   const normalizedRoles = roles.map(normalizeRoleValue).filter(Boolean);
-  const isSystemAdministrator = normalizedRoles.includes("system admin") ||
-    normalizedRoles.includes("system administrator");
-  const isSuperUser =
-    normalizedRoles.includes("super user") ||
-    normalizedRoles.includes("assistant super user");
-  return isSystemAdministrator && isSuperUser;
+  return normalizedRoles.some((role) =>
+    [
+      "su",
+      "asu",
+      "super user",
+      "assistant super user",
+      "system admin",
+      "system administrator",
+      "superuser",
+      "assistantsuperuser",
+      "systemadmin",
+    ].includes(role)
+  );
 }
 
 function isSystemDefaultPreferenceOnlyUpdate(payload = {}) {
