@@ -301,6 +301,13 @@ async function enhanceSubscriptionsWithAggregation(subscriptions, req) {
             submissionDate: profile?.submissionDate ?? null,
           },
 
+          // Financial aliases at top-level for template column compatibility.
+          // Some templates reference these keys directly (without financialDetails.* path).
+          lastPaymentAmount: financialDetails.lastPaymentAmount ?? null,
+          lastPaymentDate: financialDetails.lastPaymentDate ?? null,
+          membershipFee: financialDetails.membershipFee ?? null,
+          outstandingBalance: financialDetails.outstandingBalance ?? null,
+
           // ========== FINANCIAL DETAILS (FROM ACCOUNT-SERVICE) – every field always sent ==========
           financialDetails: {
             lastPaymentAmount: financialDetails.lastPaymentAmount ?? null,
