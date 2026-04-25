@@ -1394,10 +1394,17 @@ async function getSubscriptionsWithTemplate(req, res) {
 
     const data = enhancedSubscriptions.map((row) => {
       const filtered = filterByColumns(row, columns);
-      if (row && row._id !== undefined) {
-        return { _id: row._id, ...filtered };
+      if (row) {
+        // Always include identity keys even when not explicitly selected in template columns.
+        // Frontend details navigation depends on profileId/subscription _id to load profile + current subscription.
+        return {
+          _id: row._id ?? null,
+          profileId: row.profileId ?? null,
+          applicationId: row.applicationId ?? null,
+          ...filtered,
+        };
       }
-      return filtered;
+      return filtered || {};
     });
 
     return res.success({
