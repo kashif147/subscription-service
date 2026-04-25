@@ -11,6 +11,7 @@ const {
   calculateFinancialDetails,
   buildProfileMap,
   buildPaymentMap,
+  getMemberIdLookupKeys,
 } = require("../helpers/serviceClient");
 const { buildDemotionEventPayload } = require("../helpers/demotionEventPayload");
 const {
@@ -174,7 +175,20 @@ async function enhanceSubscriptionsWithAggregation(subscriptions, req) {
         const profile = profileMap.get(subscription.profileId.toString());
         const portalUser = portalUserMap.get(subscription._id.toString());
         const memberPayments = profile?.membershipNumber
-          ? paymentMap.get(String(profile.membershipNumber).trim()) || []
+          ? getMemberIdLookupKeys(profile.membershipNumber).reduce((acc, key) => {
+              const rows = paymentMap.get(key) || [];
+              if (!rows.length) return acc;
+              if (!acc.length) return [...rows];
+              const seen = new Set(acc.map((item) => String(item?._id || "")));
+              rows.forEach((row) => {
+                const rowId = String(row?._id || "");
+                if (!seen.has(rowId)) {
+                  seen.add(rowId);
+                  acc.push(row);
+                }
+              });
+              return acc;
+            }, [])
           : [];
 
         // Calculate financial details

@@ -147,9 +147,16 @@ async function fetchPaymentsByMemberIds(membershipNumbers, tenantId, req) {
   }
 
   try {
+    const expandedMemberIds = [
+      ...new Set(
+        membershipNumbers
+          .flatMap((id) => getMemberIdLookupKeys(id))
+          .filter(Boolean)
+      ),
+    ];
     // Omit purpose: account-service then returns all succeeded member payments; we split by purpose in calculateFinancialDetails.
     const payload = {
-      memberIds: membershipNumbers,
+      memberIds: expandedMemberIds,
       status: "succeeded",
     };
     const postUrl = `${ACCOUNT_SERVICE_URL}/api/payments/batch`;
@@ -157,8 +164,8 @@ async function fetchPaymentsByMemberIds(membershipNumbers, tenantId, req) {
     console.log(`[Gateway Aggregation] === Account (payments) batch request ===`);
     console.log(`[Gateway Aggregation] ACCOUNT_SERVICE_URL: ${ACCOUNT_SERVICE_URL}`);
     console.log(`[Gateway Aggregation] Request: POST ${postUrl}`);
-    console.log(`[Gateway Aggregation] memberIds count: ${membershipNumbers.length}, tenantId: ${tenantId || req?.headers?.['x-tenant-id'] || 'none'}`);
-    console.log(`[Gateway Aggregation] memberIds (first 3): ${membershipNumbers.slice(0, 3).join(', ')}${membershipNumbers.length > 3 ? '...' : ''}`);
+    console.log(`[Gateway Aggregation] memberIds count: ${expandedMemberIds.length}, tenantId: ${tenantId || req?.headers?.['x-tenant-id'] || 'none'}`);
+    console.log(`[Gateway Aggregation] memberIds (first 3): ${expandedMemberIds.slice(0, 3).join(', ')}${expandedMemberIds.length > 3 ? '...' : ''}`);
 
     const headers = buildAccountServiceRequestHeaders(req, tenantId);
     const response = await axios.post(postUrl, payload, {
@@ -246,7 +253,8 @@ function normalizeMembershipCategoryKey(category) {
   return String(category)
     .trim()
     .toUpperCase()
-    .replace(/[\s-]+/g, "_");
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
 }
 
 function getMembershipFeeByCategory(category) {
@@ -285,15 +293,24 @@ function buildProfileMap(profiles) {
 function buildPaymentMap(payments) {
   const map = new Map();
   (payments || []).forEach(payment => {
-    const key = payment.memberId != null ? String(payment.memberId).trim() : "";
-    if (key) {
+    const keys = getMemberIdLookupKeys(payment?.memberId);
+    keys.forEach((key) => {
       if (!map.has(key)) {
         map.set(key, []);
       }
       map.get(key).push(payment);
-    }
+    });
   });
   return map;
+}
+
+function getMemberIdLookupKeys(memberId) {
+  const raw = memberId != null ? String(memberId).trim() : "";
+  if (!raw) return [];
+  const noSpaces = raw.replace(/\s+/g, "");
+  const upper = noSpaces.toUpperCase();
+  const alnumOnly = upper.replace(/[^A-Z0-9]/g, "");
+  return [...new Set([raw, noSpaces, upper, alnumOnly].filter(Boolean))];
 }
 
 /**
@@ -332,6 +349,7 @@ module.exports = {
   getMembershipFeeByCategory,
   buildProfileMap,
   buildPaymentMap,
+  getMemberIdLookupKeys,
   normalizeMembershipCategoryKey,
   getExpectedAnnualFeeCents,
 };
