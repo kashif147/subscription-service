@@ -6,6 +6,34 @@ const {
 const { USER_TYPE } = require("../constants/enums");
 const { AppError } = require("../errors/AppError");
 
+function normalizeRoleValue(role) {
+  if (!role) return "";
+  const raw =
+    typeof role === "string"
+      ? role
+      : role.code || role.name || role.roleCode || role.roleName || "";
+  return String(raw)
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function canEditSystemDefaultTemplate(req) {
+  const roles = Array.isArray(req.roles)
+    ? req.roles
+    : Array.isArray(req.user?.roles)
+      ? req.user.roles
+      : [];
+  const normalizedRoles = roles.map(normalizeRoleValue).filter(Boolean);
+  const isSystemAdministrator = normalizedRoles.includes("system admin") ||
+    normalizedRoles.includes("system administrator");
+  const isSuperUser =
+    normalizedRoles.includes("super user") ||
+    normalizedRoles.includes("assistant super user");
+  return isSystemAdministrator && isSuperUser;
+}
+
 function requireCrmTenant(req, res) {
   if (!req.user || req.user.userType !== USER_TYPE.CRM) {
     res.status(403).json({
@@ -116,6 +144,17 @@ exports.updateTemplate = async (req, res) => {
 
   try {
     const validated = await filter_template_update.validateAsync(req.body);
+    const existingTemplate = await subscriptionFilterTemplateService.getTemplateById(
+      req.params.templateId,
+      ctx.tenantId,
+      ctx.userId
+    );
+    if (existingTemplate?.systemDefault && !canEditSystemDefaultTemplate(req)) {
+      return res.status(403).json({
+        status: "fail",
+        data: "Access denied. Only System Administrator with Assistant Super User or Super User role can update system default templates.",
+      });
+    }
     const template = await subscriptionFilterTemplateService.updateTemplate(
       req.params.templateId,
       ctx.tenantId,
