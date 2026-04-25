@@ -164,9 +164,7 @@ async function enhanceSubscriptionsWithAggregation(subscriptions, req) {
       .map(p => p.membershipNumber)
       .filter(Boolean);
     
-    console.log(`🔍 Step 5: Fetching payments and summaries for ${membershipNumbers.length} members (from ${profiles.length} profiles)...`);
-    const payments = await fetchPaymentsByMemberIds(membershipNumbers, req.tenantId, req);
-    const paymentMap = buildPaymentMap(payments);
+    console.log(`🔍 Step 5: Fetching summaries for ${membershipNumbers.length} members (from ${profiles.length} profiles)...`);
     const summaries = await fetchMemberSummariesByMemberIds(
       membershipNumbers,
       req.tenantId,
@@ -175,7 +173,26 @@ async function enhanceSubscriptionsWithAggregation(subscriptions, req) {
     const summaryMap = new Map(
       (summaries || []).map((x) => [String(x?.memberId || "").trim(), x?.summary || null])
     );
-    console.log(`[Gateway Aggregation] Payment map: ${paymentMap.size} members have payments, total payment records: ${payments.length}`);
+    const missingSummaryMemberIds = membershipNumbers.filter((memberId) => {
+      const key = String(memberId || "").trim();
+      return key && !summaryMap.get(key);
+    });
+    let paymentMap = new Map();
+    let payments = [];
+    if (missingSummaryMemberIds.length > 0) {
+      console.log(
+        `[Gateway Aggregation] Summary missing for ${missingSummaryMemberIds.length} members, fetching payment fallback...`
+      );
+      payments = await fetchPaymentsByMemberIds(
+        missingSummaryMemberIds,
+        req.tenantId,
+        req
+      );
+      paymentMap = buildPaymentMap(payments);
+    }
+    console.log(
+      `[Gateway Aggregation] Summary count: ${summaries.length}, Payment fallback members: ${paymentMap.size}, payment records: ${payments.length}`
+    );
 
     // Step 6: Merge all data into enhanced subscriptions
     console.log("🔍 Step 6: Merging all data...");
