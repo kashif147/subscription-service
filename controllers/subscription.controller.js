@@ -8,6 +8,7 @@ const { MEMBERSHIP_EVENTS } = require("../rabbitMQ/events");
 const {
   fetchProfilesByIds,
   fetchPaymentsByMemberIds,
+  fetchMemberSummariesByMemberIds,
   calculateFinancialDetails,
   buildProfileMap,
   buildPaymentMap,
@@ -163,9 +164,17 @@ async function enhanceSubscriptionsWithAggregation(subscriptions, req) {
       .map(p => p.membershipNumber)
       .filter(Boolean);
     
-    console.log(`🔍 Step 5: Fetching payments for ${membershipNumbers.length} members (from ${profiles.length} profiles)...`);
+    console.log(`🔍 Step 5: Fetching payments and summaries for ${membershipNumbers.length} members (from ${profiles.length} profiles)...`);
     const payments = await fetchPaymentsByMemberIds(membershipNumbers, req.tenantId, req);
     const paymentMap = buildPaymentMap(payments);
+    const summaries = await fetchMemberSummariesByMemberIds(
+      membershipNumbers,
+      req.tenantId,
+      req
+    );
+    const summaryMap = new Map(
+      (summaries || []).map((x) => [String(x?.memberId || "").trim(), x?.summary || null])
+    );
     console.log(`[Gateway Aggregation] Payment map: ${paymentMap.size} members have payments, total payment records: ${payments.length}`);
 
     // Step 6: Merge all data into enhanced subscriptions
@@ -192,10 +201,31 @@ async function enhanceSubscriptionsWithAggregation(subscriptions, req) {
           : [];
 
         // Calculate financial details
-        const financialDetails = calculateFinancialDetails(
+        const fallbackFinancialDetails = calculateFinancialDetails(
           memberPayments,
           subscription.membershipCategory
         );
+        const memberId = profile?.membershipNumber ? String(profile.membershipNumber).trim() : "";
+        const summary = memberId ? summaryMap.get(memberId) : null;
+        const netCents = Number(summary?.net);
+        const latestInvoiceAmountCents = Number(summary?.latestInvoice?.amount);
+        const summaryLastPaymentAmountCents = Number(summary?.lastPayment?.amount);
+        const financialDetails = {
+          // Outstanding in grid should match account summary net (AR outstanding) when available.
+          outstandingBalance:
+            Number.isFinite(netCents) ? netCents / 100 : fallbackFinancialDetails.outstandingBalance,
+          // Membership fee should match latest invoice amount when available.
+          membershipFee:
+            Number.isFinite(latestInvoiceAmountCents)
+              ? latestInvoiceAmountCents / 100
+              : fallbackFinancialDetails.membershipFee,
+          lastPaymentAmount:
+            Number.isFinite(summaryLastPaymentAmountCents)
+              ? summaryLastPaymentAmountCents / 100
+              : fallbackFinancialDetails.lastPaymentAmount,
+          lastPaymentDate:
+            summary?.lastPayment?.date || fallbackFinancialDetails.lastPaymentDate || null,
+        };
 
         // Resolve actual user email from profile (preferredEmail can be "personal"/"work" – use personalEmail/workEmail)
         const getActualEmailFromProfile = (contactInfo) => {

@@ -192,6 +192,25 @@ async function fetchPaymentsByMemberIds(membershipNumbers, tenantId, req) {
   }
 }
 
+async function fetchMemberSummariesByMemberIds(memberIds, tenantId, req) {
+  if (!memberIds || memberIds.length === 0) return [];
+  const uniqueMemberIds = [...new Set(memberIds.map((x) => String(x || "").trim()).filter(Boolean))];
+  const headers = buildAccountServiceRequestHeaders(req, tenantId);
+  const results = await Promise.all(
+    uniqueMemberIds.map(async (memberId) => {
+      try {
+        const url = `${ACCOUNT_SERVICE_URL}/api/reports/member/${encodeURIComponent(memberId)}/summary`;
+        const response = await axios.get(url, { headers, timeout: 8000 });
+        const summary = response.data?.data || response.data || null;
+        return { memberId, summary };
+      } catch (error) {
+        return { memberId, summary: null };
+      }
+    })
+  );
+  return results;
+}
+
 function calculateFinancialDetails(payments, membershipCategory) {
   // Sort payments by date (most recent first)
   const sortedPayments = (payments || []).sort((a, b) => 
@@ -344,6 +363,7 @@ module.exports = {
   createInternalWorkerReq,
   fetchProfilesByIds,
   fetchPaymentsByMemberIds,
+  fetchMemberSummariesByMemberIds,
   fetchReminderEligibilityBulk,
   calculateFinancialDetails,
   getMembershipFeeByCategory,
