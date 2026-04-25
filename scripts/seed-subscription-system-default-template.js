@@ -46,7 +46,7 @@ async function main() {
   const existing = await Template.findOne({
     tenantId,
     systemDefault: true,
-    templateType: "subscription",
+    templateType: "members",
     "meta.deleted": false,
   });
 
@@ -58,7 +58,7 @@ async function main() {
 
   const doc = new Template({
     name: "System default",
-    templateType: "subscription",
+    templateType: "members",
     tenantId,
     userId: undefined,
     filters: {

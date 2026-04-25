@@ -9,7 +9,7 @@ const TemplateSchema = new mongoose.Schema(
     },
     templateType: {
       type: String,
-      default: "subscription",
+      default: "members",
       trim: true,
       index: true,
     },

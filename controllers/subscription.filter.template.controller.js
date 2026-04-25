@@ -61,7 +61,7 @@ exports.getUserTemplates = async (req, res) => {
   if (!ctx) return;
 
   try {
-    const type = req.query.type || "subscription";
+    const type = req.query.type || "members";
     const list =
       await subscriptionFilterTemplateService.getUserTemplatesWithSystemDefault(
         ctx.tenantId,
