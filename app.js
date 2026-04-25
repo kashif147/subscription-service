@@ -97,7 +97,7 @@ if (process.env.RABBIT_URL) {
       } = require("./jobs/cancellationGraceSweep.js");
       startCancellationGraceSweep();
       console.log(
-        "✅ RabbitMQ fully initialized with middleware (subscription-service)"
+        "✅ RabbitMQ fully initialized with middleware (subscription-service)",
       );
     })
     .catch((error) => {
@@ -119,7 +119,7 @@ if (process.env.RABBIT_URL) {
   });
 } else {
   console.warn(
-    "⚠️ RABBIT_URL not configured, skipping RabbitMQ initialization"
+    "⚠️ RABBIT_URL not configured, skipping RabbitMQ initialization",
   );
 }
 
@@ -129,6 +129,9 @@ app.use(express.json({ limit: "200mb" }));
 app.use(loggerMiddleware);
 
 // CORS middleware with enhanced configuration
+// app.use(handlePreflight);
+// app.use(corsMiddleware);
+// app.use(corsErrorHandler);
 app.use(handlePreflight);
 app.use(corsMiddleware);
 app.use(corsErrorHandler);
@@ -138,7 +141,7 @@ app.use(
     secret: "secret2024",
     resave: false,
     saveUninitialized: false,
-  })
+  }),
 );
 
 app.set("view engine", "ejs");
@@ -153,7 +156,7 @@ app.use(
     explorer: true,
     customCss: ".swagger-ui .topbar { display: none }",
     customSiteTitle: "User Service API Documentation",
-  })
+  }),
 );
 
 app.get("/", (req, res) => {
