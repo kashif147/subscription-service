@@ -128,13 +128,17 @@ app.use(express.json({ limit: "200mb" }));
 
 app.use(loggerMiddleware);
 
-// CORS middleware with enhanced configuration
-// app.use(handlePreflight);
-// app.use(corsMiddleware);
-// app.use(corsErrorHandler);
-app.use(handlePreflight);
-app.use(corsMiddleware);
-app.use(corsErrorHandler);
+// Avoid duplicate CORS headers when an upstream gateway/proxy already sets them.
+// Keep app-level CORS enabled by default only for local development.
+const enableAppCors =
+  (process.env.ENABLE_APP_CORS || "").toLowerCase() === "true" ||
+  (!process.env.ENABLE_APP_CORS && process.env.NODE_ENV !== "production");
+
+if (enableAppCors) {
+  app.use(handlePreflight);
+  app.use(corsMiddleware);
+  app.use(corsErrorHandler);
+}
 
 app.use(
   session({
