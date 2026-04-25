@@ -34,6 +34,14 @@ function canEditSystemDefaultTemplate(req) {
   return isSystemAdministrator && isSuperUser;
 }
 
+function isSystemDefaultPreferenceOnlyUpdate(payload = {}) {
+  const keys = Object.keys(payload || {}).filter(
+    (key) => payload[key] !== undefined,
+  );
+  if (keys.length === 0) return false;
+  return keys.every((key) => key === "isDefault" || key === "pinned");
+}
+
 function requireCrmTenant(req, res) {
   if (!req.user || req.user.userType !== USER_TYPE.CRM) {
     res.status(403).json({
@@ -149,7 +157,14 @@ exports.updateTemplate = async (req, res) => {
       ctx.tenantId,
       ctx.userId
     );
-    if (existingTemplate?.systemDefault && !canEditSystemDefaultTemplate(req)) {
+    const isPreferenceOnly =
+      existingTemplate?.systemDefault &&
+      isSystemDefaultPreferenceOnlyUpdate(validated);
+    if (
+      existingTemplate?.systemDefault &&
+      !isPreferenceOnly &&
+      !canEditSystemDefaultTemplate(req)
+    ) {
       return res.status(403).json({
         status: "fail",
         data: "Access denied. Only System Administrator with Assistant Super User or Super User role can update system default templates.",
