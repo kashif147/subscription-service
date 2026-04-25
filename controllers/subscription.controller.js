@@ -1278,6 +1278,12 @@ async function undoCancelMembership(req, res) {
  * PUT /api/v1/subscriptions/filter  body: { page?, limit?, templateId? }
  */
 async function getSubscriptionsWithTemplate(req, res) {
+    const normalizeTemplateType = (type) => {
+      const normalized = String(type || "").trim().toLowerCase();
+      if (!normalized) return "members";
+      if (normalized === "member") return "members";
+      return normalized;
+    };
   try {
     if (!req.user || req.user.userType !== USER_TYPE.CRM) {
       return res.status(403).json({
@@ -1305,10 +1311,13 @@ async function getSubscriptionsWithTemplate(req, res) {
           req.tenantId,
           crmUserId
         );
-        if (template.templateType && template.templateType !== "subscription") {
+        if (
+          template.templateType &&
+          normalizeTemplateType(template.templateType) !== "members"
+        ) {
           return res.status(400).json({
             status: "fail",
-            data: "Template is not a subscription template.",
+            data: "Template is not a members template.",
           });
         }
       } else {
@@ -1316,13 +1325,13 @@ async function getSubscriptionsWithTemplate(req, res) {
           await subscriptionFilterTemplateService.getDefaultTemplateForType(
             req.tenantId,
             crmUserId,
-            "subscription"
+            "members"
           );
         if (!template) {
           template =
             await subscriptionFilterTemplateService.getSystemDefaultTemplate(
               req.tenantId,
-              "subscription"
+              "members"
             );
         }
       }
