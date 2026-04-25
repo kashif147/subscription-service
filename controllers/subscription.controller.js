@@ -1428,11 +1428,31 @@ async function getSubscriptionsWithTemplate(req, res) {
       if (row) {
         // Always include identity keys even when not explicitly selected in template columns.
         // Frontend details navigation depends on profileId/subscription _id to load profile + current subscription.
+        const resolvedMembershipFee =
+          row.membershipFee ?? row.financialDetails?.membershipFee ?? null;
+        const resolvedOutstandingBalance =
+          row.outstandingBalance ?? row.financialDetails?.outstandingBalance ?? null;
+        const resolvedLastPaymentAmount =
+          row.lastPaymentAmount ?? row.financialDetails?.lastPaymentAmount ?? null;
+        const resolvedLastPaymentDate =
+          row.lastPaymentDate ?? row.financialDetails?.lastPaymentDate ?? null;
         return {
           _id: row._id ?? null,
           profileId: row.profileId ?? null,
           applicationId: row.applicationId ?? null,
           ...filtered,
+          membershipNumber: row.membershipNumber ?? null,
+          membershipFee: resolvedMembershipFee,
+          outstandingBalance: resolvedOutstandingBalance,
+          lastPaymentAmount: resolvedLastPaymentAmount,
+          lastPaymentDate: resolvedLastPaymentDate,
+          financialDetails: {
+            ...(row.financialDetails || {}),
+            membershipFee: resolvedMembershipFee,
+            outstandingBalance: resolvedOutstandingBalance,
+            lastPaymentAmount: resolvedLastPaymentAmount,
+            lastPaymentDate: resolvedLastPaymentDate,
+          },
         };
       }
       return filtered || {};
