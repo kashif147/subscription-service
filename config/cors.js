@@ -8,20 +8,21 @@ const cors = require("cors");
 // Environment-based CORS configuration
 const getCorsConfig = () => {
   const environment = process.env.NODE_ENV || "development";
+  const sharedDevOrigins = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:3002",
+    "http://localhost:8080",
+    "http://localhost:8081",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
+  ];
 
   // Base allowed origins for different environments
   const baseOrigins = {
-    development: [
-      "http://localhost:3000",
-      "http://localhost:3001",
-      "http://localhost:3002",
-      "http://localhost:8080",
-      "http://localhost:8081",
-      "http://127.0.0.1:3000",
-      "http://127.0.0.1:3001",
-    ],
+    development: [...sharedDevOrigins],
     staging: [
-      "http://localhost:3000",
+      ...sharedDevOrigins,
       "https://testportal-dabravg2h3hfbke9.canadacentral-01.azurewebsites.net",
       "https://userserviceshell-aqf6f0b8fqgmagch.canadacentral-01.azurewebsites.net",
       "https://projectshellapi-c0hqhbdwaaahbcab.northeurope-01.azurewebsites.net",
@@ -29,6 +30,7 @@ const getCorsConfig = () => {
       "https://staging-mobile.yourdomain.com",
     ],
     production: [
+      ...sharedDevOrigins,
       "https://app.yourdomain.com",
       "https://admin.yourdomain.com",
       "https://mobile.yourdomain.com",
