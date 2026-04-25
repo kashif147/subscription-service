@@ -6,7 +6,16 @@ function normalizeTemplateType(type) {
   const normalized = String(type || "").trim().toLowerCase();
   if (!normalized) return "members";
   if (normalized === "member") return "members";
+  if (normalized === "subscription") return "members";
   return normalized;
+}
+
+function templateTypeQuery(type) {
+  const normalizedType = normalizeTemplateType(type);
+  if (normalizedType === "members") {
+    return { $in: ["members", "member", "subscription"] };
+  }
+  return normalizedType;
 }
 
 function toTemplateResponse(doc) {
@@ -28,7 +37,7 @@ async function findSystemDefaultTemplateDoc(type, tenantId) {
   const base = {
     systemDefault: true,
     "meta.deleted": false,
-    templateType: type,
+    templateType: templateTypeQuery(type),
   };
   if (tenantId) {
     const scoped = await Template.findOne({ ...base, tenantId });
@@ -76,7 +85,7 @@ class SubscriptionFilterTemplateService {
 
   async getUserTemplatesWithSystemDefault(tenantId, userId, type = "members") {
     const normalizedType = normalizeTemplateType(type);
-    const typeFilter = { templateType: normalizedType };
+    const typeFilter = { templateType: templateTypeQuery(normalizedType) };
     const systemDefault = await findSystemDefaultTemplateDoc(
       normalizedType,
       tenantId
@@ -106,7 +115,7 @@ class SubscriptionFilterTemplateService {
       const type = normalizeTemplateType(systemDefault.templateType);
       const userHasDefault = await Template.exists({
         userId,
-        templateType: type,
+        templateType: templateTypeQuery(type),
         isDefault: true,
         "meta.deleted": false,
         ...tenantOrLegacyMatch(tenantId),
@@ -164,7 +173,7 @@ class SubscriptionFilterTemplateService {
         await Template.updateMany(
           {
             userId,
-            templateType: type,
+            templateType: templateTypeQuery(type),
             "meta.deleted": false,
             ...tenantOrLegacyMatch(tenantId),
           },
@@ -182,7 +191,7 @@ class SubscriptionFilterTemplateService {
       await Template.updateMany(
         {
           userId,
-          templateType: type,
+          templateType: templateTypeQuery(type),
           _id: { $ne: templateId },
           "meta.deleted": false,
           ...tenantOrLegacyMatch(tenantId),
@@ -264,7 +273,7 @@ class SubscriptionFilterTemplateService {
     const normalizedType = normalizeTemplateType(type);
     return Template.findOne({
       userId,
-      templateType: normalizedType,
+      templateType: templateTypeQuery(normalizedType),
       isDefault: true,
       "meta.deleted": false,
       ...tenantOrLegacyMatch(tenantId),
