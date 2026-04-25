@@ -268,6 +268,7 @@ async function enhanceSubscriptionsWithAggregation(subscriptions, req) {
           // ========== SUBSCRIPTION FIELDS – every field always sent ==========
           _id: subscription._id,
           profileId: subscription.profileId ?? null,
+          membershipNumber: profile?.membershipNumber ?? null,
           // userId: resolvedUserId,
           applicationId: subscription.applicationId ?? null,
           tenantId: subscription.tenantId ?? null,
