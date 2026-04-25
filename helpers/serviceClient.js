@@ -2,6 +2,9 @@ const axios = require('axios');
 
 const PROFILE_SERVICE_URL = process.env.PROFILE_SERVICE_URL || 'http://projectshell-vm.northeurope.cloudapp.azure.com/profile-service';
 const ACCOUNT_SERVICE_URL = process.env.ACCOUNT_SERVICE_URL || 'http://projectshell-vm.northeurope.cloudapp.azure.com/account-service';
+const MEMBER_SUMMARY_CACHE_TTL_MS = 60 * 1000;
+const MEMBER_SUMMARY_MAX_CONCURRENCY = 2;
+const memberSummaryCache = new Map();
 
 /** Minimal request shape for internal async workers (RabbitMQ/event consumers). */
 function createInternalWorkerReq(tenantId, actor = {}) {
@@ -196,19 +199,41 @@ async function fetchMemberSummariesByMemberIds(memberIds, tenantId, req) {
   if (!memberIds || memberIds.length === 0) return [];
   const uniqueMemberIds = [...new Set(memberIds.map((x) => String(x || "").trim()).filter(Boolean))];
   const headers = buildAccountServiceRequestHeaders(req, tenantId);
-  const results = await Promise.all(
-    uniqueMemberIds.map(async (memberId) => {
-      try {
-        const url = `${ACCOUNT_SERVICE_URL}/api/reports/member/${encodeURIComponent(memberId)}/summary`;
-        const response = await axios.get(url, { headers, timeout: 8000 });
-        const summary = response.data?.data || response.data || null;
-        return { memberId, summary };
-      } catch (error) {
-        return { memberId, summary: null };
-      }
-    })
-  );
-  return results;
+  const now = Date.now();
+
+  const out = [];
+  const pendingIds = [];
+
+  uniqueMemberIds.forEach((memberId) => {
+    const cached = memberSummaryCache.get(memberId);
+    if (cached && now - cached.at < MEMBER_SUMMARY_CACHE_TTL_MS) {
+      out.push({ memberId, summary: cached.data });
+      return;
+    }
+    pendingIds.push(memberId);
+  });
+
+  // Fetch with low concurrency to avoid account-service 429 rate limits.
+  for (let i = 0; i < pendingIds.length; i += MEMBER_SUMMARY_MAX_CONCURRENCY) {
+    const chunk = pendingIds.slice(i, i + MEMBER_SUMMARY_MAX_CONCURRENCY);
+    const chunkResults = await Promise.all(
+      chunk.map(async (memberId) => {
+        try {
+          const url = `${ACCOUNT_SERVICE_URL}/api/reports/member/${encodeURIComponent(memberId)}/summary`;
+          const response = await axios.get(url, { headers, timeout: 8000 });
+          const summary = response.data?.data || response.data || null;
+          memberSummaryCache.set(memberId, { at: Date.now(), data: summary });
+          return { memberId, summary };
+        } catch (error) {
+          // Graceful fallback: on 429 (or any error), skip summary and let caller use computed fallback.
+          return { memberId, summary: null };
+        }
+      })
+    );
+    out.push(...chunkResults);
+  }
+
+  return out;
 }
 
 function calculateFinancialDetails(payments, membershipCategory) {
