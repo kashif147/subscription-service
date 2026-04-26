@@ -445,6 +445,105 @@ async function getSubscriptions(req, res) {
 }
 
 /**
+ * When a member has multiple subscription rows, pick the **most recent** one for status display.
+ * Does **not** prefer `isCurrent` or Active — the latest period / row wins.
+ * Order: latest `startDate`, then `updatedAt`, then `createdAt`.
+ */
+function pickSubscriptionForStatus(rows) {
+  if (!rows?.length) return null;
+  const sorted = [...rows].sort((a, b) => {
+    const sa = new Date(a.startDate || 0).getTime();
+    const sb = new Date(b.startDate || 0).getTime();
+    if (sb !== sa) return sb - sa;
+    const ua = new Date(a.updatedAt || 0).getTime();
+    const ub = new Date(b.updatedAt || 0).getTime();
+    if (ub !== ua) return ub - ua;
+    const ca = new Date(a.createdAt || 0).getTime();
+    const cb = new Date(b.createdAt || 0).getTime();
+    return cb - ca;
+  });
+  return sorted[0] || null;
+}
+
+/**
+ * CRM-only. POST /api/v1/subscriptions/batch-subscription-status
+ * Body: { profileIds: string[] } (max 2000)
+ * Returns { data: { data: [ { profileId, subscriptionStatus } ] } } via res.success — subscriptionStatus from subscription model.
+ */
+async function getBatchSubscriptionStatus(req, res) {
+  try {
+    if (!req.user || req.user.userType !== USER_TYPE.CRM) {
+      return res.status(403).json({
+        status: "fail",
+        data: "Access denied. CRM users only.",
+      });
+    }
+
+    const raw = req.body?.profileIds;
+    if (!Array.isArray(raw) || raw.length === 0) {
+      return res.fail("profileIds must be a non-empty array");
+    }
+
+    const unique = [
+      ...new Set(
+        raw
+          .map((id) => (id == null ? "" : String(id).trim()))
+          .filter((id) => id && mongoose.Types.ObjectId.isValid(id)),
+      ),
+    ];
+    if (unique.length > 2000) {
+      return res.fail("Too many profileIds (max 2000)");
+    }
+
+    const oids = unique.map((id) => new mongoose.Types.ObjectId(id));
+    const baseQuery = {
+      profileId: { $in: oids },
+      deleted: { $ne: true },
+    };
+
+    let query = { ...baseQuery };
+    if (req.tenantId) {
+      query.tenantId = req.tenantId;
+    }
+    let subs = await Subscription.find(query)
+      .select(
+        "profileId subscriptionStatus startDate createdAt updatedAt",
+      )
+      .lean();
+
+    if (subs.length === 0 && req.tenantId) {
+      subs = await Subscription.find(baseQuery)
+        .select(
+          "profileId subscriptionStatus startDate createdAt updatedAt",
+        )
+        .lean();
+    }
+
+    const byProfile = new Map();
+    for (const s of subs) {
+      const k = s.profileId?.toString();
+      if (!k) continue;
+      if (!byProfile.has(k)) byProfile.set(k, []);
+      byProfile.get(k).push(s);
+    }
+
+    const data = unique.map((pid) => {
+      const rows = byProfile.get(pid) || [];
+      const sub = pickSubscriptionForStatus(rows);
+      return {
+        profileId: pid,
+        subscriptionStatus: sub?.subscriptionStatus ?? null,
+      };
+    });
+
+    return res.success({ data });
+  } catch (error) {
+    console.error("getBatchSubscriptionStatus:", error.message);
+    return res.serverError(error);
+  }
+}
+
+/**
  * CRM-only: one subscription by Mongo _id, same enriched shape as GET / (data is an array of one).
  * GET /api/v1/subscriptions/:subscriptionId
  */
@@ -1502,6 +1601,7 @@ async function getSubscriptionsWithTemplate(req, res) {
 module.exports = {
   getSubscriptionsByProfile,
   getSubscriptions,
+  getBatchSubscriptionStatus,
   getSubscriptionsWithTemplate,
   getSubscriptionById,
   updateSubscriptionById,

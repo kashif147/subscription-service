@@ -3,6 +3,7 @@ const router = express.Router();
 const {
   getSubscriptionsByProfile,
   getSubscriptions,
+  getBatchSubscriptionStatus,
   getSubscriptionsWithTemplate,
   getSubscriptionById,
   updateSubscriptionById,
@@ -25,6 +26,13 @@ const getCurrentOnly = (req, res) => {
 
 router.get("/profile/:profileId/current", ensureAuthenticatedOrInternal, getCurrentOnly);
 router.get("/profile/:profileId", ensureAuthenticatedOrInternal, getSubscriptionsByProfile);
+
+// CRM: batch resolve subscriptionStatus by profileId (e.g. account-service batch details)
+router.post(
+  "/batch-subscription-status",
+  ensureAuthenticated,
+  getBatchSubscriptionStatus,
+);
 
 router.use("/templates", ensureAuthenticated, subscriptionFilterTemplateRoutes);
 router.put("/filter", ensureAuthenticated, getSubscriptionsWithTemplate);
