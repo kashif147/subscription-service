@@ -31,6 +31,19 @@ const {
 
 const MEMBERSHIP_CANCEL_GRACE_DAYS = 28;
 
+function requestHasUsableFilters(bodyFilters) {
+  if (
+    !bodyFilters ||
+    typeof bodyFilters !== "object" ||
+    Array.isArray(bodyFilters)
+  ) {
+    return false;
+  }
+  return Object.values(bodyFilters).some(
+    (fe) => fe && Array.isArray(fe.values) && fe.values.length > 0,
+  );
+}
+
 function normalizeCategoryValue(c) {
   if (c == null || c === "") return "";
   return String(c).trim();
@@ -1510,13 +1523,16 @@ async function getSubscriptionsWithTemplate(req, res) {
       throw err;
     }
 
-    const filters =
+    const bodyFilters =
       req.body &&
       req.body.filters &&
       typeof req.body.filters === "object" &&
       !Array.isArray(req.body.filters)
         ? req.body.filters
-        : template.filters || {};
+        : null;
+    const filters = requestHasUsableFilters(bodyFilters)
+      ? bodyFilters
+      : (template.filters || {});
     const columns =
       Array.isArray(req.body?.columns) && req.body.columns.length > 0
         ? req.body.columns

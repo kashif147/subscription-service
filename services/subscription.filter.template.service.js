@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const Template = require("../models/template.model");
 const { AppError } = require("../errors/AppError");
 const { MEMBERSHIP_STATUS } = require("../constants/enums");
@@ -33,6 +34,15 @@ function tenantOrLegacyMatch(tenantId) {
   };
 }
 
+function toObjectIdForNe(id) {
+  if (id == null) return id;
+  const s = String(id);
+  if (mongoose.isValidObjectId(s)) {
+    return new mongoose.Types.ObjectId(s);
+  }
+  return s;
+}
+
 async function findSystemDefaultTemplateDoc(type, tenantId) {
   const base = {
     systemDefault: true,
@@ -66,10 +76,10 @@ class SubscriptionFilterTemplateService {
     if (isDefault) {
       await Template.updateMany(
         {
-          userId,
-          templateType: type,
-          isDefault: true,
+          userId: String(userId),
+          templateType: templateTypeQuery(type),
           "meta.deleted": false,
+          systemDefault: { $ne: true },
           ...tenantOrLegacyMatch(tenantId),
         },
         { $set: { isDefault: false } }
@@ -105,7 +115,7 @@ class SubscriptionFilterTemplateService {
       "meta.deleted": false,
       ...typeFilter,
       ...tenantOrLegacyMatch(tenantId),
-    }).sort({ pinned: -1, isDefault: -1, createdAt: -1 });
+    }).sort({ isDefault: -1, createdAt: -1 });
 
     const allTemplates = [];
     if (systemDefault) allTemplates.push(systemDefault);
@@ -195,9 +205,10 @@ class SubscriptionFilterTemplateService {
       if (isDefault === true) {
         await Template.updateMany(
           {
-            userId,
+            userId: String(userId),
             templateType: templateTypeQuery(type),
             "meta.deleted": false,
+            systemDefault: { $ne: true },
             ...tenantOrLegacyMatch(tenantId),
           },
           { $set: { isDefault: false } }
@@ -213,10 +224,11 @@ class SubscriptionFilterTemplateService {
     if (isDefault === true) {
       await Template.updateMany(
         {
-          userId,
+          userId: String(userId),
           templateType: templateTypeQuery(type),
-          _id: { $ne: templateId },
+          _id: { $ne: toObjectIdForNe(templateId) },
           "meta.deleted": false,
+          systemDefault: { $ne: true },
           ...tenantOrLegacyMatch(tenantId),
         },
         { $set: { isDefault: false } }

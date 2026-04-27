@@ -35,14 +35,21 @@ const TemplateSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       default: {},
     },
+    /**
+     * User’s default view for this list — only field that means “default view” for CRM users.
+     */
     isDefault: {
       type: Boolean,
       default: false,
     },
+    /** Legacy sort hint; unused in app UI. */
     pinned: {
       type: Boolean,
       default: false,
     },
+    /**
+     * Seeded system template document — not a duplicate of isDefault.
+     */
     systemDefault: {
       type: Boolean,
       default: false,
