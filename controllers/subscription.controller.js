@@ -665,6 +665,7 @@ async function updateSubscriptionById(req, res) {
     const beforePlain = serializeSubscriptionForAudit(doc);
 
     const prevCategory = doc.membershipCategory;
+    // Authoritative “old tier” period start for GL proration — subscription row before this update (no body override).
     const prevStartDate = doc.startDate;
 
     if (Object.prototype.hasOwnProperty.call(body, "paymentType")) {

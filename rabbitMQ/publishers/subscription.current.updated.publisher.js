@@ -50,6 +50,28 @@ async function publishSubscriptionCurrentUpdated(subscriptionDoc, ctx = {}) {
     subscriptionAttributes.processingDate = processingDateISO;
   }
 
+  function optionalCtxDateIso(key) {
+    const v = ctx[key];
+    if (v == null || v === "") return null;
+    const d = v instanceof Date ? v : new Date(v);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toISOString().split("T")[0];
+  }
+
+  const submissionDateISO = optionalCtxDateIso("submissionDate");
+  const applicationDateISO = optionalCtxDateIso("applicationDate");
+
+  const subscriptionDetailsPayload = {
+    membershipCategory: membershipCategory || null,
+    dateJoined: startDateISO,
+  };
+  if (submissionDateISO) {
+    subscriptionDetailsPayload.submissionDate = submissionDateISO;
+  }
+  if (applicationDateISO) {
+    subscriptionDetailsPayload.applicationDate = applicationDateISO;
+  }
+
   const eventPayload = {
     subscriptionId: subscriptionDoc._id.toString(),
     profileId: profileIdObjectId.toString(),
@@ -58,10 +80,7 @@ async function publishSubscriptionCurrentUpdated(subscriptionDoc, ctx = {}) {
     userId: userId || null,
     tenantId: tenantId || undefined,
     effective: {
-      subscriptionDetails: {
-        membershipCategory: membershipCategory || null,
-        dateJoined: startDateISO,
-      },
+      subscriptionDetails: subscriptionDetailsPayload,
       professionalDetails: {
         membershipCategory: membershipCategory || null,
       },
