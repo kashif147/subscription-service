@@ -881,20 +881,6 @@ async function resignMembership(req, res) {
       return res.fail("reason is required");
     }
 
-    // Find the current subscription for this profile
-    const currentSubscription = await Subscription.findOne({
-      profileId: new mongoose.Types.ObjectId(profileId),
-      isCurrent: true,
-      deleted: { $ne: true },
-    });
-
-    if (!currentSubscription) {
-      return res.status(404).json({
-        status: "fail",
-        data: "No active subscription found for this profile",
-      });
-    }
-
     // Get CRM user ObjectId for meta.updatedBy
     let updatedByObjectId = null;
     if (req.userId && req.tenantId) {
@@ -920,23 +906,36 @@ async function resignMembership(req, res) {
       return res.fail("Invalid dateResigned format");
     }
 
-    // Update subscription with resignation details
-    currentSubscription.resignation = {
-      dateResigned: resignationDate,
-      reason: reason.trim(),
+    const filter = {
+      profileId: new mongoose.Types.ObjectId(profileId),
+      isCurrent: true,
+      deleted: { $ne: true },
     };
-    currentSubscription.isCurrent = false;
-    currentSubscription.subscriptionStatus = MEMBERSHIP_STATUS.RESIGNED;
-
-    // Update meta.updatedBy if we have the CRM user ObjectId
+    const $set = {
+      resignation: {
+        dateResigned: resignationDate,
+        reason: reason.trim(),
+      },
+      isCurrent: false,
+      subscriptionStatus: MEMBERSHIP_STATUS.RESIGNED,
+    };
     if (updatedByObjectId) {
-      if (!currentSubscription.meta) {
-        currentSubscription.meta = {};
-      }
-      currentSubscription.meta.updatedBy = updatedByObjectId;
+      $set["meta.updatedBy"] = updatedByObjectId;
     }
 
-    await currentSubscription.save();
+    // Atomic update avoids Mongoose save() emitting `reminders.*` paths when DB has `reminders: []`.
+    const currentSubscription = await Subscription.findOneAndUpdate(
+      filter,
+      { $set },
+      { new: true }
+    );
+
+    if (!currentSubscription) {
+      return res.status(404).json({
+        status: "fail",
+        data: "No active subscription found for this profile",
+      });
+    }
 
     // Publish event for user-service to downgrade portal role to NON-MEMBER
     try {
@@ -1078,43 +1077,49 @@ async function undoResignMembership(req, res) {
       }
     );
 
-    // Clear resignation data and reactivate the subscription
-    resignedSubscription.resignation = undefined;
-    resignedSubscription.isCurrent = true;
-    resignedSubscription.subscriptionStatus = MEMBERSHIP_STATUS.ACTIVE;
-
-    // Update meta.updatedBy if we have the CRM user ObjectId
+    const undoSet = {
+      isCurrent: true,
+      subscriptionStatus: MEMBERSHIP_STATUS.ACTIVE,
+    };
     if (updatedByObjectId) {
-      if (!resignedSubscription.meta) {
-        resignedSubscription.meta = {};
-      }
-      resignedSubscription.meta.updatedBy = updatedByObjectId;
+      undoSet["meta.updatedBy"] = updatedByObjectId;
     }
 
-    await resignedSubscription.save();
+    const updatedResigned = await Subscription.findOneAndUpdate(
+      { _id: resignedSubscription._id },
+      { $set: undoSet, $unset: { resignation: "" } },
+      { new: true }
+    );
+
+    if (!updatedResigned) {
+      return res.status(404).json({
+        status: "fail",
+        data: "Subscription could not be updated",
+      });
+    }
 
     // Publish event for user-service to update user role back to MEMBER
     try {
       const identity = await buildDemotionEventPayload({
-        profileId: resignedSubscription.profileId,
-        subscriptionUserId: resignedSubscription.userId,
-        tenantId: resignedSubscription.tenantId || req.tenantId,
+        profileId: updatedResigned.profileId,
+        subscriptionUserId: updatedResigned.userId,
+        tenantId: updatedResigned.tenantId || req.tenantId,
         req,
       });
       const publishResult = await publisher.publish(
         MEMBERSHIP_EVENTS.SUBSCRIPTION_RESIGNATION_UNDONE,
         {
-          subscriptionId: resignedSubscription._id.toString(),
+          subscriptionId: updatedResigned._id.toString(),
           profileId: identity.profileId,
           userId: identity.userId,
           userEmail: identity.userEmail,
           tenantId: identity.tenantId,
           actorUserId: req.userId || null,
           actorEmail: req.user?.email || null,
-          applicationId: resignedSubscription.applicationId || null,
+          applicationId: updatedResigned.applicationId || null,
         },
         {
-          tenantId: resignedSubscription.tenantId || req.tenantId,
+          tenantId: updatedResigned.tenantId || req.tenantId,
           exchange: "membership.events",
           routingKey: MEMBERSHIP_EVENTS.SUBSCRIPTION_RESIGNATION_UNDONE,
           metadata: { service: "subscription-service", version: "1.0" },
@@ -1126,8 +1131,8 @@ async function undoResignMembership(req, res) {
           "✅ Subscription resignation undone event published successfully:",
           {
             eventId: publishResult.eventId,
-            subscriptionId: resignedSubscription._id.toString(),
-            profileId: resignedSubscription.profileId.toString(),
+            subscriptionId: updatedResigned._id.toString(),
+            profileId: updatedResigned.profileId.toString(),
           }
         );
       } else {
@@ -1135,7 +1140,7 @@ async function undoResignMembership(req, res) {
           "❌ Failed to publish subscription resignation undone event:",
           {
             error: publishResult.error,
-            subscriptionId: resignedSubscription._id.toString(),
+            subscriptionId: updatedResigned._id.toString(),
           }
         );
       }
@@ -1148,9 +1153,9 @@ async function undoResignMembership(req, res) {
     }
 
     try {
-      const cur = await publishSubscriptionCurrentUpdated(resignedSubscription, {
-        tenantId: resignedSubscription.tenantId || req.tenantId,
-        userId: resignedSubscription.userId ?? null,
+      const cur = await publishSubscriptionCurrentUpdated(updatedResigned, {
+        tenantId: updatedResigned.tenantId || req.tenantId,
+        userId: updatedResigned.userId ?? null,
       });
       if (!cur.success) {
         console.error(
@@ -1168,10 +1173,10 @@ async function undoResignMembership(req, res) {
     return res.success({
       message: "Resignation undone successfully",
       data: {
-        subscriptionId: resignedSubscription._id,
-        profileId: resignedSubscription.profileId,
-        subscriptionStatus: resignedSubscription.subscriptionStatus,
-        isCurrent: resignedSubscription.isCurrent,
+        subscriptionId: updatedResigned._id,
+        profileId: updatedResigned.profileId,
+        subscriptionStatus: updatedResigned.subscriptionStatus,
+        isCurrent: updatedResigned.isCurrent,
       },
     });
   } catch (error) {
@@ -1214,19 +1219,6 @@ async function cancelMembership(req, res) {
       return res.fail("reason is required");
     }
 
-    const currentSubscription = await Subscription.findOne({
-      profileId: new mongoose.Types.ObjectId(profileId),
-      isCurrent: true,
-      deleted: { $ne: true },
-    });
-
-    if (!currentSubscription) {
-      return res.status(404).json({
-        status: "fail",
-        data: "No active subscription found for this profile",
-      });
-    }
-
     const cancelledAt = new Date(dateCancelled);
     if (isNaN(cancelledAt.getTime())) {
       return res.fail("Invalid dateCancelled format");
@@ -1252,22 +1244,38 @@ async function cancelMembership(req, res) {
       }
     }
 
-    currentSubscription.cancellation = {
-      dateCancelled: cancelledAt,
-      reason: String(reason).trim(),
-      gracePeriodEnd,
-      reinstated: false,
-      portalRoleDemotionPublishedAt: null,
+    const cancelFilter = {
+      profileId: new mongoose.Types.ObjectId(profileId),
+      isCurrent: true,
+      deleted: { $ne: true },
     };
-    currentSubscription.isCurrent = false;
-    currentSubscription.subscriptionStatus = MEMBERSHIP_STATUS.CANCELLED;
-
+    const cancelSet = {
+      cancellation: {
+        dateCancelled: cancelledAt,
+        reason: String(reason).trim(),
+        gracePeriodEnd,
+        reinstated: false,
+        portalRoleDemotionPublishedAt: null,
+      },
+      isCurrent: false,
+      subscriptionStatus: MEMBERSHIP_STATUS.CANCELLED,
+    };
     if (updatedByObjectId) {
-      if (!currentSubscription.meta) currentSubscription.meta = {};
-      currentSubscription.meta.updatedBy = updatedByObjectId;
+      cancelSet["meta.updatedBy"] = updatedByObjectId;
     }
 
-    await currentSubscription.save();
+    const currentSubscription = await Subscription.findOneAndUpdate(
+      cancelFilter,
+      { $set: cancelSet },
+      { new: true }
+    );
+
+    if (!currentSubscription) {
+      return res.status(404).json({
+        status: "fail",
+        data: "No active subscription found for this profile",
+      });
+    }
 
     try {
       const publishResult = await publisher.publish(
@@ -1371,41 +1379,49 @@ async function undoCancelMembership(req, res) {
       { $set: { isCurrent: false } }
     );
 
-    if (!cancelledSubscription.cancellation) {
-      cancelledSubscription.cancellation = {};
-    }
-    cancelledSubscription.cancellation.reinstated = true;
-    cancelledSubscription.isCurrent = true;
-    cancelledSubscription.subscriptionStatus = MEMBERSHIP_STATUS.ACTIVE;
-
+    const undoCancelSet = {
+      "cancellation.reinstated": true,
+      isCurrent: true,
+      subscriptionStatus: MEMBERSHIP_STATUS.ACTIVE,
+    };
     if (updatedByObjectId) {
-      if (!cancelledSubscription.meta) cancelledSubscription.meta = {};
-      cancelledSubscription.meta.updatedBy = updatedByObjectId;
+      undoCancelSet["meta.updatedBy"] = updatedByObjectId;
     }
 
-    await cancelledSubscription.save();
+    const updatedCancelled = await Subscription.findOneAndUpdate(
+      { _id: cancelledSubscription._id },
+      { $set: undoCancelSet },
+      { new: true }
+    );
+
+    if (!updatedCancelled) {
+      return res.status(404).json({
+        status: "fail",
+        data: "Subscription could not be updated",
+      });
+    }
 
     try {
       const identity = await buildDemotionEventPayload({
-        profileId: cancelledSubscription.profileId,
-        subscriptionUserId: cancelledSubscription.userId,
-        tenantId: cancelledSubscription.tenantId || req.tenantId,
+        profileId: updatedCancelled.profileId,
+        subscriptionUserId: updatedCancelled.userId,
+        tenantId: updatedCancelled.tenantId || req.tenantId,
         req,
       });
       const publishResult = await publisher.publish(
         MEMBERSHIP_EVENTS.SUBSCRIPTION_CANCELLATION_UNDONE,
         {
-          subscriptionId: cancelledSubscription._id.toString(),
+          subscriptionId: updatedCancelled._id.toString(),
           profileId: identity.profileId,
           userId: identity.userId,
           userEmail: identity.userEmail,
           tenantId: identity.tenantId,
           actorUserId: req.userId || null,
           actorEmail: req.user?.email || null,
-          applicationId: cancelledSubscription.applicationId || null,
+          applicationId: updatedCancelled.applicationId || null,
         },
         {
-          tenantId: cancelledSubscription.tenantId || req.tenantId,
+          tenantId: updatedCancelled.tenantId || req.tenantId,
           exchange: "membership.events",
           routingKey: MEMBERSHIP_EVENTS.SUBSCRIPTION_CANCELLATION_UNDONE,
           metadata: { service: "subscription-service", version: "1.0" },
@@ -1414,7 +1430,7 @@ async function undoCancelMembership(req, res) {
       if (!publishResult.success) {
         console.error("❌ Failed to publish subscription cancellation undone event:", {
           error: publishResult.error,
-          subscriptionId: cancelledSubscription._id.toString(),
+          subscriptionId: updatedCancelled._id.toString(),
         });
       }
     } catch (e) {
@@ -1422,9 +1438,9 @@ async function undoCancelMembership(req, res) {
     }
 
     try {
-      const cur = await publishSubscriptionCurrentUpdated(cancelledSubscription, {
-        tenantId: cancelledSubscription.tenantId || req.tenantId,
-        userId: cancelledSubscription.userId ?? null,
+      const cur = await publishSubscriptionCurrentUpdated(updatedCancelled, {
+        tenantId: updatedCancelled.tenantId || req.tenantId,
+        userId: updatedCancelled.userId ?? null,
       });
       if (!cur.success) {
         console.error(
@@ -1442,11 +1458,11 @@ async function undoCancelMembership(req, res) {
     return res.success({
       message: "Cancellation undone successfully",
       data: {
-        subscriptionId: cancelledSubscription._id,
-        profileId: cancelledSubscription.profileId,
-        subscriptionStatus: cancelledSubscription.subscriptionStatus,
-        isCurrent: cancelledSubscription.isCurrent,
-        cancellation: cancelledSubscription.cancellation,
+        subscriptionId: updatedCancelled._id,
+        profileId: updatedCancelled.profileId,
+        subscriptionStatus: updatedCancelled.subscriptionStatus,
+        isCurrent: updatedCancelled.isCurrent,
+        cancellation: updatedCancelled.cancellation,
       },
     });
   } catch (error) {

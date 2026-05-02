@@ -129,17 +129,34 @@ SubscriptionSchema.index(
   { unique: false }
 );
 
-// Legacy docs had `reminders` as an array; schema expects a subdoc. Saving with []
-// makes MongoDB reject nested paths (e.g. reminders.cancellationBatchNotifiedAt).
-SubscriptionSchema.pre("save", function normalizeRemindersSubdoc(next) {
-  if (
-    !this.reminders ||
-    typeof this.reminders !== "object" ||
-    Array.isArray(this.reminders)
-  ) {
-    this.reminders = {};
-    this.markModified("reminders");
+/** Defaults for `reminders` subdoc; used when DB has `[]` or other invalid legacy shapes. */
+const REMINDERS_SUBDOC_DEFAULTS = {
+  reminder1At: null,
+  reminder2At: null,
+  reminder3At: null,
+  lastReminderBatchId: null,
+  cancellationBatchNotifiedAt: null,
+  scheduledEnforcementDate: null,
+  reminderCancellationBatchId: null,
+  clearedAt: null,
+  clearedReason: null,
+};
+
+function coerceRemindersSubdoc(doc) {
+  const r = doc.get("reminders");
+  if (r == null || typeof r !== "object" || Array.isArray(r)) {
+    doc.set("reminders", { ...REMINDERS_SUBDOC_DEFAULTS });
+    doc.markModified("reminders");
   }
+}
+
+// Run after hydrate so later `.save()` diffs against a real subdoc, not `reminders: []`.
+SubscriptionSchema.post("init", function postInitCoerceReminders() {
+  coerceRemindersSubdoc(this);
+});
+
+SubscriptionSchema.pre("save", function preSaveCoerceReminders(next) {
+  coerceRemindersSubdoc(this);
   next();
 });
 
