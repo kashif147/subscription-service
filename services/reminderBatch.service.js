@@ -140,9 +140,9 @@ async function createReminderBatch(req, body) {
 }
 
 async function listReminderBatches(req, query) {
-  const { kind, status, page = 1, limit = 20 } = query;
+  const { kind, status, page = 1, limit = 500 } = query;
   const p = Math.max(1, parseInt(page, 10) || 1);
-  const l = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+  const l = Math.min(1000, Math.max(1, parseInt(limit, 10) || 500));
   const q = { tenantId: req.tenantId };
   if (kind && Object.values(REMINDER_BATCH_KIND).includes(kind)) q.kind = kind;
   if (status && Object.values(REMINDER_BATCH_STATUS).includes(status)) q.status = status;
@@ -193,9 +193,9 @@ async function getReminderBatchById(req, batchId) {
 
 async function listReminderBatchMembers(req, batchId, query) {
   await getReminderBatchById(req, batchId);
-  const { tier, included, page = 1, limit = 50 } = query;
+  const { tier, included, page = 1, limit = 500 } = query;
   const p = Math.max(1, parseInt(page, 10) || 1);
-  const l = Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
+  const l = Math.min(1000, Math.max(1, parseInt(limit, 10) || 500));
   const q = { tenantId: req.tenantId, batchId };
   if (tier && Object.values(REMINDER_BATCH_TIER).includes(tier)) q.tier = tier;
   if (included === "true") q.included = true;

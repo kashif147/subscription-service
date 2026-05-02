@@ -128,4 +128,19 @@ SubscriptionSchema.index(
   { tenantId: 1, profileId: 1, isCurrent: 1 },
   { unique: false }
 );
+
+// Legacy docs had `reminders` as an array; schema expects a subdoc. Saving with []
+// makes MongoDB reject nested paths (e.g. reminders.cancellationBatchNotifiedAt).
+SubscriptionSchema.pre("save", function normalizeRemindersSubdoc(next) {
+  if (
+    !this.reminders ||
+    typeof this.reminders !== "object" ||
+    Array.isArray(this.reminders)
+  ) {
+    this.reminders = {};
+    this.markModified("reminders");
+  }
+  next();
+});
+
 module.exports = mongoose.model("subscription", SubscriptionSchema);

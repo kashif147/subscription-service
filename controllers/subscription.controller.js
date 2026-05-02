@@ -1481,7 +1481,7 @@ async function getSubscriptionsWithTemplate(req, res) {
     }
 
     const page = req.body.page ? parseInt(req.body.page, 10) : 1;
-    const limit = req.body.limit ? parseInt(req.body.limit, 10) : 10;
+    const limit = req.body.limit ? parseInt(req.body.limit, 10) : 500;
     const templateId = req.body.templateId;
     const crmUserId = String(req.user.sub || req.user.id);
 
