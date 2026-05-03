@@ -3,6 +3,8 @@ const {
 	consumer,
 	shutdown,
 } = require("@projectShell/rabbitmq-middleware");
+const { createRabbitStructuredLogHandlers } = require("@projectShell/logging-lib");
+const bizLogger = require("../config/bizLogger.js");
 const { registerSubscriptionUpsertConsumer } = require("./listeners/subscription.upsert.listener");
 const {
 	handleCrmUserCreated,
@@ -81,6 +83,7 @@ async function initEventSystem() {
 	await init({
 		url: url,
 		logger: rabbitMQLogger,
+		structuredLog: createRabbitStructuredLogHandlers(bizLogger),
 		prefetch: 10,
 		connectionName: "subscription-service",
 		serviceName: "subscription-service",

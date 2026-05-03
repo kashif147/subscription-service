@@ -2,6 +2,7 @@ const { USER_TYPE } = require("../constants/enums");
 const { AppError } = require("../errors/AppError");
 const reminderBatchService = require("../services/reminderBatch.service");
 const reminderBatchRabbit = require("../jobs/reminderBatch.rabbit.js");
+const bizLogger = require("../config/bizLogger.js");
 
 function ensureCrm(req, res) {
   if (!req.user || req.user.userType !== USER_TYPE.CRM) {
@@ -84,6 +85,10 @@ async function postExecute(req, res) {
     const data = reminderBatchRabbit.isRabbitConfigured()
       ? await reminderBatchRabbit.publishReminderExecuteRequested(req, req.params.batchId)
       : await reminderBatchService.executeReminderBatch(req, req.params.batchId);
+    bizLogger.business("Reminder batch execution issued", {
+      eventType: "ReminderIssued",
+      tenantId: req.tenantId || null,
+    }, req);
     return res.success(data);
   } catch (e) {
     return handleError(res, e);

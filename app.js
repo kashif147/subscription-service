@@ -60,6 +60,12 @@ const { mongooseConnection } = require("./config/db");
 require("./models");
 const session = require("express-session");
 
+const bizLogger = require("./config/bizLogger.js");
+const {
+  correlationIdMiddleware,
+  logErrorMiddleware,
+  createSystemLogsRouter,
+} = require("@projectShell/logging-lib");
 const loggerMiddleware = require("./middlewares/logger.mw");
 const responseMiddleware = require("./middlewares/response.mw");
 const {
@@ -78,6 +84,7 @@ var app = express();
 // Disable Express automatic ETag generation (304 responses)
 app.set("etag", false);
 
+app.use(correlationIdMiddleware);
 app.use(responseMiddleware);
 
 mongooseConnection();
@@ -126,6 +133,8 @@ if (process.env.RABBIT_URL) {
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json({ limit: "200mb" }));
 
+app.use("/api", createSystemLogsRouter(bizLogger));
+
 app.use(loggerMiddleware);
 
 // CORS intentionally disabled at app layer for now.
@@ -168,8 +177,13 @@ app.use(function (req, res, next) {
   next(createError(404));
 });
 
+app.use(logErrorMiddleware(bizLogger));
+
 app.use((err, req, res, next) => {
   console.error(err.message || "Page Not Found");
+  if (req.correlationId) {
+    res.setHeader("x-correlation-id", req.correlationId);
+  }
   res.fail("Page Not Found");
 });
 

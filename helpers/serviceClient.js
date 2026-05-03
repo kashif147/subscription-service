@@ -71,6 +71,13 @@ function buildServiceHeaders(req, tenantId) {
     headers['authorization'] = req.headers['authorization'];
   }
 
+  const correlationId =
+    req.correlationId ||
+    req.headers['x-correlation-id'];
+  if (correlationId) {
+    headers['x-correlation-id'] = String(correlationId);
+  }
+
   return headers;
 }
 

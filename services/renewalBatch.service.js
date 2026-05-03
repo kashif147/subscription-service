@@ -13,6 +13,7 @@ const {
 const { AppError } = require("../errors/AppError");
 const { fetchProfilesByIds } = require("../helpers/serviceClient");
 const { publishSubscriptionCurrentUpdated } = require("../rabbitMQ/publishers/subscription.current.updated.publisher.js");
+const bizLogger = require("../config/bizLogger.js");
 const { emitRenewalBatchEvent } = require("../lib/renewalBatch.sse.js");
 const renewalBatchRabbit = require("../jobs/renewalBatch.rabbit.js");
 
@@ -293,6 +294,13 @@ async function requestExecuteRenewalBatch(req, batchId) {
   if (renewalBatchRabbit.isRabbitConfigured()) {
     try {
       await renewalBatchRabbit.publishRenewalExecuteRequested(req, String(batchId));
+      bizLogger.business("Membership renewal batch queued for processing", {
+        eventType: "MembershipRenewalQueued",
+        tenantId: req.tenantId || null,
+        profileId: null,
+        applicationId: null,
+        membershipId: null,
+      }, req);
     } catch (e) {
       console.error("[renewalBatch] rabbit publish failed", e);
       await YearEndBatch.updateOne(

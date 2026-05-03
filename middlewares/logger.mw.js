@@ -4,6 +4,14 @@ module.exports = (req, res, next) => {
     return next();
   }
 
+  if (req.path === "/api/system-logs" || req.originalUrl?.includes("/api/system-logs")) {
+    return next();
+  }
+
+  if (String(process.env.LOG_HTTP_REQUESTS || "").toLowerCase() !== "true") {
+    return next();
+  }
+
   console.log(`${req.method} - ${req.url}`);
   switch (req.method) {
     case 'GET':

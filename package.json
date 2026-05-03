@@ -15,7 +15,8 @@
   },
   "dependencies": {
     "@membership/policy-middleware": "github:kashif147/policy-middleware#gateway",
-    "@projectShell/rabbitmq-middleware": "github:kashif147/rabbitmq-middleware#gateway",
+    "@projectShell/logging-lib": "git+https://github.com/kashif147/logging-lib.git#main",
+    "@projectShell/rabbitmq-middleware": "file:../rabbitmq-middleware",
     "amqplib": "^0.10.9",
     "axios": "^1.15.0",
     "bcryptjs": "^3.0.2",
