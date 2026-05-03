@@ -27,6 +27,38 @@ function utcDayStartMs(d) {
   );
 }
 
+/** Same calendar-year bounds as subscription upsert (UTC). */
+function endOfYearForDate(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(d.getTime())) return null;
+  const y = d.getUTCFullYear();
+  return new Date(Date.UTC(y, 11, 31, 23, 59, 59, 999));
+}
+
+function startOfNextYearForDate(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(d.getTime())) return null;
+  const y = d.getUTCFullYear();
+  return new Date(Date.UTC(y + 1, 0, 1, 0, 0, 0, 0));
+}
+
+/** Today’s calendar date in UTC at noon (aligned with subscription upsert dateJoined). */
+function utcTodayNoon(asOf) {
+  const t = asOf instanceof Date ? asOf : new Date(asOf);
+  if (Number.isNaN(t.getTime())) return null;
+  return new Date(
+    Date.UTC(
+      t.getUTCFullYear(),
+      t.getUTCMonth(),
+      t.getUTCDate(),
+      12,
+      0,
+      0,
+      0
+    )
+  );
+}
+
 /** Join/start date + 1 calendar year (clamp day; noon UTC for consistency with upsert). */
 function addOneCalendarYearUtcNoon(startDate) {
   const d = startDate instanceof Date ? startDate : new Date(startDate);
@@ -51,7 +83,8 @@ function isPostgraduateCategory(raw, fromLabel) {
 }
 
 /**
- * Nightly: move members from Postgraduate Student to General after join + 1 year.
+ * Nightly: current + active subscriptions only — move Postgraduate → General after
+ * join + 1 year. Sets subscription period to today → 31 Dec (UTC year of run).
  */
 async function runPostgraduateStudentCategoryRenewalOnce() {
   const fromCategory =
@@ -72,7 +105,7 @@ async function runPostgraduateStudentCategoryRenewalOnce() {
 
   const cursor = Subscription.find(query)
     .select(
-      "_id tenantId profileId userId applicationId membershipCategory startDate endDate"
+      "_id tenantId profileId userId applicationId membershipCategory startDate endDate subscriptionYear rolloverDate"
     )
     .cursor();
 
@@ -109,7 +142,22 @@ async function runPostgraduateStudentCategoryRenewalOnce() {
     const prevCategory = doc.membershipCategory;
     const prevStartDate = doc.startDate;
 
+    const newStartDate = utcTodayNoon(now);
+    const newEndDate = newStartDate ? endOfYearForDate(newStartDate) : null;
+    const newRollover = newStartDate ? startOfNextYearForDate(newStartDate) : null;
+    if (!newStartDate || !newEndDate || !newRollover) {
+      console.warn(
+        "[POSTGRAD_CATEGORY_RENEWAL] skip: could not compute new period",
+        { subscriptionId: doc._id?.toString() }
+      );
+      continue;
+    }
+
     doc.membershipCategory = toCategory;
+    doc.startDate = newStartDate;
+    doc.endDate = newEndDate;
+    doc.subscriptionYear = newStartDate.getUTCFullYear();
+    doc.rolloverDate = newRollover;
     await doc.save();
 
     const adjustmentKey = randomUUID();
@@ -145,7 +193,7 @@ async function runPostgraduateStudentCategoryRenewalOnce() {
           membershipCategory: doc.membershipCategory ?? null,
           previousStartDate: prevStartDate,
           subscriptionStartDate: doc.startDate,
-          effectiveDate: renewalCheck.toISOString(),
+          effectiveDate: newStartDate.toISOString(),
           userId: doc.userId || null,
           actorUserId: null,
           actorEmail: null,
@@ -201,7 +249,13 @@ async function runPostgraduateStudentCategoryRenewalOnce() {
         applicationId: doc.applicationId || null,
         actorUserId: null,
         actorEmail: "system@postgraduate-category-renewal",
-        changedFields: ["membershipCategory"],
+        changedFields: [
+          "membershipCategory",
+          "startDate",
+          "endDate",
+          "subscriptionYear",
+          "rolloverDate",
+        ],
         before: beforePlain,
         after: serializeSubscriptionForAudit(doc),
         correlationId: adjustmentKey,
