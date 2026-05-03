@@ -687,7 +687,79 @@
       "name": "Membership Lifecycle",
       "item": [
         {
-          "name": "Resign Membership",
+          "name": "Resign Membership (by subscriptionId)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dateResigned\": \"2026-03-30T00:00:00.000Z\",\n  \"reason\": \"Member requested resignation\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/subscriptions/{{subscriptionId}}/resign",
+              "host": ["{{baseUrl}}"],
+              "path": [
+                "api",
+                "v1",
+                "subscriptions",
+                "{{subscriptionId}}",
+                "resign"
+              ]
+            },
+            "description": "Preferred: targets the subscription Mongo _id. Only succeeds when the row is current and Active."
+          }
+        },
+        {
+          "name": "Undo Resign Membership (by subscriptionId)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-tenant-id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"admin_error\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/subscriptions/{{subscriptionId}}/undo-resign",
+              "host": ["{{baseUrl}}"],
+              "path": [
+                "api",
+                "v1",
+                "subscriptions",
+                "{{subscriptionId}}",
+                "undo-resign"
+              ]
+            },
+            "description": "Preferred: undo resignation for the subscription Mongo _id that is Resigned with resignation details."
+          }
+        },
+        {
+          "name": "Resign Membership (legacy — by profileId)",
           "request": {
             "method": "PUT",
             "header": [
@@ -712,11 +784,12 @@
               "raw": "{{baseUrl}}/api/v1/subscriptions/resign/{{profileId}}",
               "host": ["{{baseUrl}}"],
               "path": ["api", "v1", "subscriptions", "resign", "{{profileId}}"]
-            }
+            },
+            "description": "Resolves this profile's current active subscription and delegates to the same logic as resign by subscriptionId."
           }
         },
         {
-          "name": "Undo Resign Membership",
+          "name": "Undo Resign Membership (legacy — by profileId)",
           "request": {
             "method": "PUT",
             "header": [
@@ -725,10 +798,18 @@
                 "value": "Bearer {{authToken}}"
               },
               {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
                 "key": "x-tenant-id",
                 "value": "{{tenantId}}"
               }
             ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"admin_error\"\n}"
+            },
             "url": {
               "raw": "{{baseUrl}}/api/v1/subscriptions/undo-resign/{{profileId}}",
               "host": ["{{baseUrl}}"],
@@ -739,7 +820,8 @@
                 "undo-resign",
                 "{{profileId}}"
               ]
-            }
+            },
+            "description": "Finds the most recently resigned subscription for the profile and delegates to undo by subscriptionId."
           }
         },
         {

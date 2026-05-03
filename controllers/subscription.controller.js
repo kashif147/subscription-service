@@ -869,14 +869,28 @@ async function updateSubscriptionById(req, res) {
   }
 }
 
-/**
- * Cancel/Resign membership for a profile
- * PUT /api/v1/subscriptions/resign/:profileId
- * CRM users only
- */
-async function resignMembership(req, res) {
+async function resolveCrmUpdatedByObjectId(req) {
+  if (!req.userId || !req.tenantId) return null;
   try {
-    // Check if user is CRM
+    const crmUser = await User.findOne({
+      userId: req.userId,
+      tenantId: req.tenantId,
+    }).lean();
+    return crmUser?._id || null;
+  } catch (error) {
+    console.warn(
+      `Warning: Could not find CRM user for userId ${req.userId}, continuing without updatedBy`
+    );
+    return null;
+  }
+}
+
+/**
+ * PUT /api/v1/subscriptions/:subscriptionId/resign — preferred (targets one subscription row).
+ * PUT /api/v1/subscriptions/resign/:profileId — resolves current active subscription for profile (legacy).
+ */
+async function runResignMembershipBySubscriptionId(req, res, subscriptionIdStr) {
+  try {
     if (!req.user || req.user.userType !== USER_TYPE.CRM) {
       return res.status(403).json({
         status: "fail",
@@ -884,15 +898,8 @@ async function resignMembership(req, res) {
       });
     }
 
-    const { profileId } = req.params;
-    const { dateResigned, reason } = req.body;
+    const { dateResigned, reason } = req.body || {};
 
-    // Validate profileId
-    if (!profileId || !mongoose.Types.ObjectId.isValid(profileId)) {
-      return res.fail("Invalid profileId");
-    }
-
-    // Validate required fields
     if (!dateResigned) {
       return res.fail("dateResigned is required");
     }
@@ -901,36 +908,43 @@ async function resignMembership(req, res) {
       return res.fail("reason is required");
     }
 
-    // Get CRM user ObjectId for meta.updatedBy
-    let updatedByObjectId = null;
-    if (req.userId && req.tenantId) {
-      try {
-        const crmUser = await User.findOne({
-          userId: req.userId,
-          tenantId: req.tenantId,
-        }).lean();
-
-        if (crmUser && crmUser._id) {
-          updatedByObjectId = crmUser._id;
-        }
-      } catch (error) {
-        console.warn(
-          `Warning: Could not find CRM user for userId ${req.userId}, continuing without updatedBy`
-        );
-      }
+    if (!subscriptionIdStr || !mongoose.Types.ObjectId.isValid(subscriptionIdStr)) {
+      return res.fail("Invalid subscriptionId");
     }
 
-    // Convert dateResigned to Date object if it's a string
     const resignationDate = new Date(dateResigned);
     if (isNaN(resignationDate.getTime())) {
       return res.fail("Invalid dateResigned format");
     }
 
-    const filter = {
-      profileId: new mongoose.Types.ObjectId(profileId),
-      isCurrent: true,
+    const baseQuery = {
+      _id: new mongoose.Types.ObjectId(subscriptionIdStr),
       deleted: { $ne: true },
     };
+    if (req.tenantId) {
+      baseQuery.tenantId = req.tenantId;
+    }
+
+    const existing = await Subscription.findOne(baseQuery).lean();
+    if (!existing) {
+      return res.status(404).json({
+        status: "fail",
+        data: "Subscription not found",
+      });
+    }
+
+    if (
+      !existing.isCurrent ||
+      existing.subscriptionStatus !== MEMBERSHIP_STATUS.ACTIVE
+    ) {
+      return res.status(400).json({
+        status: "fail",
+        data: "Only the current active subscription can be resigned",
+      });
+    }
+
+    const updatedByObjectId = await resolveCrmUpdatedByObjectId(req);
+
     const $set = {
       resignation: {
         dateResigned: resignationDate,
@@ -943,9 +957,8 @@ async function resignMembership(req, res) {
       $set["meta.updatedBy"] = updatedByObjectId;
     }
 
-    // Atomic update avoids Mongoose save() emitting `reminders.*` paths when DB has `reminders: []`.
     const currentSubscription = await Subscription.findOneAndUpdate(
-      filter,
+      { _id: existing._id },
       { $set },
       { new: true }
     );
@@ -953,11 +966,10 @@ async function resignMembership(req, res) {
     if (!currentSubscription) {
       return res.status(404).json({
         status: "fail",
-        data: "No active subscription found for this profile",
+        data: "Subscription could not be updated",
       });
     }
 
-    // Publish event for user-service to downgrade portal role to NON-MEMBER
     try {
       const identity = await buildDemotionEventPayload({
         profileId: currentSubscription.profileId,
@@ -1009,7 +1021,6 @@ async function resignMembership(req, res) {
         "❌ Error publishing subscription resigned event:",
         error.message
       );
-      // Don't fail the request if event publishing fails
     }
 
     return res.success({
@@ -1028,14 +1039,15 @@ async function resignMembership(req, res) {
   }
 }
 
+async function resignMembershipBySubscriptionId(req, res) {
+  return runResignMembershipBySubscriptionId(req, res, req.params.subscriptionId);
+}
+
 /**
- * Undo resignation for a profile
- * PUT /api/v1/subscriptions/undo-resign/:profileId
- * CRM users only
+ * PUT /api/v1/subscriptions/resign/:profileId — legacy: resign current active subscription for profile
  */
-async function undoResignMembership(req, res) {
+async function resignMembership(req, res) {
   try {
-    // Check if user is CRM
     if (!req.user || req.user.userType !== USER_TYPE.CRM) {
       return res.status(403).json({
         status: "fail",
@@ -1044,50 +1056,77 @@ async function undoResignMembership(req, res) {
     }
 
     const { profileId } = req.params;
-
-    // Validate profileId
     if (!profileId || !mongoose.Types.ObjectId.isValid(profileId)) {
       return res.fail("Invalid profileId");
     }
 
-    // Find the resigned subscription for this profile
-    const resignedSubscription = await Subscription.findOne({
+    const filter = {
       profileId: new mongoose.Types.ObjectId(profileId),
-      subscriptionStatus: MEMBERSHIP_STATUS.RESIGNED,
+      isCurrent: true,
       deleted: { $ne: true },
+    };
+    if (req.tenantId) {
+      filter.tenantId = req.tenantId;
+    }
+
+    const sub = await Subscription.findOne(filter).select("_id").lean();
+    if (!sub) {
+      return res.status(404).json({
+        status: "fail",
+        data: "No active subscription found for this profile",
+      });
+    }
+
+    return runResignMembershipBySubscriptionId(req, res, sub._id.toString());
+  } catch (error) {
+    console.error("Error resigning membership:", error.message);
+    return res.serverError(error);
+  }
+}
+
+/**
+ * PUT /api/v1/subscriptions/:subscriptionId/undo-resign — preferred.
+ * PUT /api/v1/subscriptions/undo-resign/:profileId — legacy: latest resigned row for profile
+ */
+async function runUndoResignMembershipBySubscriptionId(req, res, subscriptionIdStr) {
+  try {
+    if (!req.user || req.user.userType !== USER_TYPE.CRM) {
+      return res.status(403).json({
+        status: "fail",
+        data: "Access denied. CRM users only.",
+      });
+    }
+
+    if (!subscriptionIdStr || !mongoose.Types.ObjectId.isValid(subscriptionIdStr)) {
+      return res.fail("Invalid subscriptionId");
+    }
+
+    const baseQuery = {
+      _id: new mongoose.Types.ObjectId(subscriptionIdStr),
+      deleted: { $ne: true },
+      subscriptionStatus: MEMBERSHIP_STATUS.RESIGNED,
       resignation: { $exists: true, $ne: null },
-    }).sort({ updatedAt: -1 }); // Get the most recently resigned subscription
+    };
+    if (req.tenantId) {
+      baseQuery.tenantId = req.tenantId;
+    }
+
+    const resignedSubscription = await Subscription.findOne(baseQuery).lean();
 
     if (!resignedSubscription) {
       return res.status(404).json({
         status: "fail",
-        data: "No resigned subscription found for this profile",
+        data: "No resigned subscription found for this subscription id",
       });
     }
 
-    // Get CRM user ObjectId for meta.updatedBy
-    let updatedByObjectId = null;
-    if (req.userId && req.tenantId) {
-      try {
-        const crmUser = await User.findOne({
-          userId: req.userId,
-          tenantId: req.tenantId,
-        }).lean();
+    const updatedByObjectId = await resolveCrmUpdatedByObjectId(req);
 
-        if (crmUser && crmUser._id) {
-          updatedByObjectId = crmUser._id;
-        }
-      } catch (error) {
-        console.warn(
-          `Warning: Could not find CRM user for userId ${req.userId}, continuing without updatedBy`
-        );
-      }
-    }
+    const profileOid = resignedSubscription.profileId;
 
-    // Set any existing current subscriptions to false (to ensure only one is current)
     await Subscription.updateMany(
       {
-        profileId: new mongoose.Types.ObjectId(profileId),
+        profileId: profileOid,
         isCurrent: true,
         deleted: { $ne: true },
         _id: { $ne: resignedSubscription._id },
@@ -1118,7 +1157,6 @@ async function undoResignMembership(req, res) {
       });
     }
 
-    // Publish event for user-service to update user role back to MEMBER
     try {
       const identity = await buildDemotionEventPayload({
         profileId: updatedResigned.profileId,
@@ -1169,7 +1207,6 @@ async function undoResignMembership(req, res) {
         "❌ Error publishing subscription resignation undone event:",
         error.message
       );
-      // Don't fail the request if event publishing fails
     }
 
     try {
@@ -1199,6 +1236,53 @@ async function undoResignMembership(req, res) {
         isCurrent: updatedResigned.isCurrent,
       },
     });
+  } catch (error) {
+    console.error("Error undoing resignation:", error.message);
+    return res.serverError(error);
+  }
+}
+
+async function undoResignMembershipBySubscriptionId(req, res) {
+  return runUndoResignMembershipBySubscriptionId(
+    req,
+    res,
+    req.params.subscriptionId
+  );
+}
+
+async function undoResignMembership(req, res) {
+  try {
+    if (!req.user || req.user.userType !== USER_TYPE.CRM) {
+      return res.status(403).json({
+        status: "fail",
+        data: "Access denied. CRM users only.",
+      });
+    }
+
+    const { profileId } = req.params;
+    if (!profileId || !mongoose.Types.ObjectId.isValid(profileId)) {
+      return res.fail("Invalid profileId");
+    }
+
+    const resignedSubscription = await Subscription.findOne({
+      profileId: new mongoose.Types.ObjectId(profileId),
+      subscriptionStatus: MEMBERSHIP_STATUS.RESIGNED,
+      deleted: { $ne: true },
+      resignation: { $exists: true, $ne: null },
+    }).sort({ updatedAt: -1 });
+
+    if (!resignedSubscription) {
+      return res.status(404).json({
+        status: "fail",
+        data: "No resigned subscription found for this profile",
+      });
+    }
+
+    return runUndoResignMembershipBySubscriptionId(
+      req,
+      res,
+      resignedSubscription._id.toString()
+    );
   } catch (error) {
     console.error("Error undoing resignation:", error.message);
     return res.serverError(error);
@@ -1686,7 +1770,9 @@ module.exports = {
   getSubscriptionById,
   updateSubscriptionById,
   resignMembership,
+  resignMembershipBySubscriptionId,
   undoResignMembership,
+  undoResignMembershipBySubscriptionId,
   cancelMembership,
   undoCancelMembership,
   getSubscriptionYearsMeta,

@@ -8,7 +8,9 @@ const {
   getSubscriptionById,
   updateSubscriptionById,
   resignMembership,
+  resignMembershipBySubscriptionId,
   undoResignMembership,
+  undoResignMembershipBySubscriptionId,
   cancelMembership,
   undoCancelMembership,
   getSubscriptionYearsMeta,
@@ -43,6 +45,18 @@ router.get(
   "/meta/subscription-years",
   ensureAuthenticated,
   getSubscriptionYearsMeta,
+);
+
+// CRM-only: resign / undo-resign by subscription Mongo _id (must be before generic PUT /:subscriptionId)
+router.put(
+  "/:subscriptionId/resign",
+  ensureAuthenticated,
+  resignMembershipBySubscriptionId,
+);
+router.put(
+  "/:subscriptionId/undo-resign",
+  ensureAuthenticated,
+  undoResignMembershipBySubscriptionId,
 );
 
 // CRM-only: partial update by Mongo _id (category change → RabbitMQ for account-service GL)
