@@ -102,7 +102,11 @@ if (process.env.RABBIT_URL) {
       const {
         startCancellationGraceSweep,
       } = require("./jobs/cancellationGraceSweep.js");
+      const {
+        startPostgraduateStudentCategoryRenewalJob,
+      } = require("./jobs/postgraduateStudentCategoryRenewal.job.js");
       startCancellationGraceSweep();
+      startPostgraduateStudentCategoryRenewalJob();
       console.log(
         "✅ RabbitMQ fully initialized with middleware (subscription-service)",
       );
@@ -115,12 +119,28 @@ if (process.env.RABBIT_URL) {
   // Graceful shutdown
   process.on("SIGTERM", async () => {
     console.log("⏹️  SIGTERM received, shutting down gracefully...");
+    const {
+      stopCancellationGraceSweep,
+    } = require("./jobs/cancellationGraceSweep.js");
+    const {
+      stopPostgraduateStudentCategoryRenewalJob,
+    } = require("./jobs/postgraduateStudentCategoryRenewal.job.js");
+    stopCancellationGraceSweep();
+    stopPostgraduateStudentCategoryRenewalJob();
     await shutdownEventSystem();
     process.exit(0);
   });
 
   process.on("SIGINT", async () => {
     console.log("⏹️  SIGINT received, shutting down gracefully...");
+    const {
+      stopCancellationGraceSweep,
+    } = require("./jobs/cancellationGraceSweep.js");
+    const {
+      stopPostgraduateStudentCategoryRenewalJob,
+    } = require("./jobs/postgraduateStudentCategoryRenewal.job.js");
+    stopCancellationGraceSweep();
+    stopPostgraduateStudentCategoryRenewalJob();
     await shutdownEventSystem();
     process.exit(0);
   });

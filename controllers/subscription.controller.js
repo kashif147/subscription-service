@@ -809,6 +809,8 @@ async function updateSubscriptionById(req, res) {
             membershipCategory: doc.membershipCategory ?? null,
             previousStartDate: prevStartDate,
             subscriptionStartDate: doc.startDate,
+            effectiveDate: new Date().toISOString(),
+            userId: doc.userId || null,
             actorUserId: req.userId || null,
             actorEmail: req.user?.email || null,
           },
