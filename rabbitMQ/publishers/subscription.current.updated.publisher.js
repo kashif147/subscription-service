@@ -93,6 +93,9 @@ async function publishSubscriptionCurrentUpdated(subscriptionDoc, ctx = {}) {
         ? ctx.renewalBatchId.toString()
         : String(ctx.renewalBatchId);
   }
+  if (ctx.skipMembershipApprovedNotification === true) {
+    eventPayload.skipMembershipApprovedNotification = true;
+  }
 
   const publishResult = await publisher.publish(
     MEMBERSHIP_EVENTS.SUBSCRIPTION_CURRENT_UPDATED,

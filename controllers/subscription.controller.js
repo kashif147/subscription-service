@@ -989,6 +989,7 @@ async function runResignMembershipBySubscriptionId(req, res, subscriptionIdStr) 
           actorEmail: req.user?.email || null,
           reason: "resigned",
           applicationId: currentSubscription.applicationId || null,
+          dateResigned: resignationDate.toISOString(),
         },
         {
           tenantId: currentSubscription.tenantId || req.tenantId,
@@ -1213,6 +1214,7 @@ async function runUndoResignMembershipBySubscriptionId(req, res, subscriptionIdS
       const cur = await publishSubscriptionCurrentUpdated(updatedResigned, {
         tenantId: updatedResigned.tenantId || req.tenantId,
         userId: updatedResigned.userId ?? null,
+        skipMembershipApprovedNotification: true,
       });
       if (!cur.success) {
         console.error(
