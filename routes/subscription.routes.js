@@ -11,6 +11,7 @@ const {
   undoResignMembership,
   cancelMembership,
   undoCancelMembership,
+  getSubscriptionYearsMeta,
 } = require("../controllers/subscription.controller");
 const subscriptionFilterTemplateRoutes = require("./subscription.filter.template.routes");
 const {
@@ -36,6 +37,13 @@ router.post(
 
 router.use("/templates", ensureAuthenticated, subscriptionFilterTemplateRoutes);
 router.put("/filter", ensureAuthenticated, getSubscriptionsWithTemplate);
+
+// CRM: cached distinct subscription years (must be before "/:subscriptionId")
+router.get(
+  "/meta/subscription-years",
+  ensureAuthenticated,
+  getSubscriptionYearsMeta,
+);
 
 // CRM-only: partial update by Mongo _id (category change → RabbitMQ for account-service GL)
 router.put("/:subscriptionId", ensureAuthenticated, updateSubscriptionById);

@@ -380,6 +380,7 @@ async function processRenewalBatchExecute(batchId) {
     const archiveIds = archiveRows.map((r) => r.subscriptionId);
     await bulkUpdateSubscriptionChunk(archiveIds, {
       subscriptionStatus: MEMBERSHIP_STATUS.ARCHIVED,
+      isCurrent: false,
     });
     emitBatch(batchId, { status: RENEWAL_BATCH_STATUS.INPROGRESS, step: "archive_done" });
 
@@ -392,6 +393,7 @@ async function processRenewalBatchExecute(batchId) {
     const suspendIds = suspendRows.map((r) => r.subscriptionId);
     await bulkUpdateSubscriptionChunk(suspendIds, {
       subscriptionStatus: MEMBERSHIP_STATUS.SUSPENDED,
+      isCurrent: false,
     });
     emitBatch(batchId, { status: RENEWAL_BATCH_STATUS.INPROGRESS, step: "suspend_done" });
 

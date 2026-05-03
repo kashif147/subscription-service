@@ -46,6 +46,7 @@ exports.MEMBERSHIP_STATUS = {
   SUSPENDED: "Suspended",
   ARCHIVED: "Archived",
   RENEWED: "Renewed",
+  LAPSED: "Lapsed",
 };
 
 // Reminder Type Enums

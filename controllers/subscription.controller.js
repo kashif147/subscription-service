@@ -28,6 +28,9 @@ const {
   buildSubscriptionMongoQueryFromTemplateFilters,
   filterByColumns,
 } = require("../helpers/subscriptionListTemplate");
+const {
+  getSubscriptionYearsForTenant,
+} = require("../services/subscriptionYearMeta.service");
 
 const MEMBERSHIP_CANCEL_GRACE_DAYS = 28;
 
@@ -411,7 +414,8 @@ async function getSubscriptions(req, res) {
       });
     }
 
-    const { profileId, applicationId, isCurrent } = req.query;
+    const { profileId, applicationId, isCurrent, subscriptionStatus } =
+      req.query;
 
     const query = { deleted: { $ne: true } };
 
@@ -437,10 +441,26 @@ async function getSubscriptions(req, res) {
       query.isCurrent = false;
     }
 
+    const statusTrim =
+      subscriptionStatus != null ? String(subscriptionStatus).trim() : "";
+    if (statusTrim) {
+      query.subscriptionStatus = statusTrim;
+    }
+
     console.log("🔍 Step 1: Fetching subscriptions from DB...");
-    const subscriptions = await Subscription.find(query)
+    let subscriptions = await Subscription.find(query)
       .sort({ createdAt: -1 })
       .lean();
+
+    // One profile + current-only: never return multiple rows (legacy duplicate isCurrent data).
+    if (
+      profileId &&
+      query.isCurrent === true &&
+      subscriptions.length > 1
+    ) {
+      const pick = pickSubscriptionForStatus(subscriptions);
+      subscriptions = pick ? [pick] : subscriptions;
+    }
 
     console.log(`✅ Found ${subscriptions.length} subscriptions`);
 
@@ -1631,6 +1651,33 @@ async function getSubscriptionsWithTemplate(req, res) {
   }
 }
 
+/**
+ * CRM: distinct subscription years for filter dropdowns (Mongo distinct per request).
+ * GET /api/v1/subscriptions/meta/subscription-years
+ */
+async function getSubscriptionYearsMeta(req, res) {
+  try {
+    if (!req.user || req.user.userType !== USER_TYPE.CRM) {
+      return res.status(403).json({
+        status: "fail",
+        data: "Access denied. CRM users only.",
+      });
+    }
+    if (!req.tenantId) {
+      return res.status(400).json({
+        status: "fail",
+        data: "Missing tenant context",
+      });
+    }
+
+    const years = await getSubscriptionYearsForTenant(req.tenantId);
+    return res.success({ years });
+  } catch (error) {
+    console.error("getSubscriptionYearsMeta:", error.message);
+    return res.serverError(error);
+  }
+}
+
 module.exports = {
   getSubscriptionsByProfile,
   getSubscriptions,
@@ -1642,4 +1689,5 @@ module.exports = {
   undoResignMembership,
   cancelMembership,
   undoCancelMembership,
+  getSubscriptionYearsMeta,
 };

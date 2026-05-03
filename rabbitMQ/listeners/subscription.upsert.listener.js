@@ -22,6 +22,29 @@ function startOfNextYear(date) {
   return new Date(Date.UTC(y + 1, 0, 1, 0, 0, 0, 0));
 }
 
+function utcStartOfDayMs(d) {
+  const x = d instanceof Date ? d : new Date(d);
+  if (Number.isNaN(x.getTime())) return null;
+  return Date.UTC(
+    x.getUTCFullYear(),
+    x.getUTCMonth(),
+    x.getUTCDate(),
+    0,
+    0,
+    0,
+    0
+  );
+}
+
+/** Subscription row covers today if its endDate is still on or after today's UTC calendar date. */
+function subscriptionPeriodStillOpen(endDate) {
+  if (!endDate) return true;
+  const endMs = new Date(endDate).getTime();
+  if (Number.isNaN(endMs)) return true;
+  const todayStart = utcStartOfDayMs(new Date());
+  return todayStart != null && endMs >= todayStart;
+}
+
 function parseDateOnlyAsUtcNoon(value) {
   if (value == null || value === "") return null;
   if (value instanceof Date) {
@@ -132,6 +155,7 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       paymentFrequency = null,
       userId = null,
       userEmail = null,
+      isCurrent: payloadIsCurrent = undefined,
     } = data || {};
 
     const resolvedUserId =
@@ -195,15 +219,14 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       tenantId,
     });
 
-    // Determine movement based on existing subscriptions
-    const query = { profileId: profileIdObjectId };
-    if (tenantId) {
-      query.tenantId = tenantId;
-    }
-
-    const existingSubs = await Subscription.find(query).sort({
-      startDate: -1,
-    });
+    // All subscription rows for this profile (ignore tenantId) — avoids misclassified movement when legacy docs lack tenantId.
+    const existingSubs = await Subscription.find({
+      profileId: profileIdObjectId,
+    })
+      .sort({
+        startDate: -1,
+      })
+      .lean();
     let membershipMovement = MEMBERSHIP_MOVEMENT.NEW_JOIN;
     if (existingSubs.length > 0) {
       const hasCurrentYear = existingSubs.some(
@@ -218,13 +241,8 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       }
     }
 
-    const updateCurrentQuery = {
-      profileId: profileIdObjectId,
-      isCurrent: true,
-    };
-    if (tenantId) {
-      updateCurrentQuery.tenantId = tenantId;
-    }
+    // Demote every current row for this profile (do not filter by tenantId).
+    // Legacy rows may have tenantId null/mismatched; scoping tenant here left multiple isCurrent=true.
 
     // Idempotent payment-only path: same profile + same applicationId as an existing row.
     // A new applicationId always creates a new subscription document; prior rows (e.g. resigned) stay as history.
@@ -309,16 +327,35 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       }
     }
 
-    await Subscription.updateMany(updateCurrentQuery, {
-      $set: { isCurrent: false },
-    });
+    let shouldBeCurrent = true;
+    if (payloadIsCurrent === false || payloadIsCurrent === "false") {
+      shouldBeCurrent = false;
+    } else if (payloadIsCurrent === true || payloadIsCurrent === "true") {
+      shouldBeCurrent = true;
+    } else if (membershipMovement === MEMBERSHIP_MOVEMENT.NEW_JOIN) {
+      // Retrospective / backfilled join whose subscription year already ended → no longer “current”.
+      shouldBeCurrent = subscriptionPeriodStillOpen(endDate);
+    }
+
+    if (shouldBeCurrent) {
+      await Subscription.updateMany(
+        {
+          profileId: profileIdObjectId,
+          isCurrent: true,
+          deleted: { $ne: true },
+        },
+        { $set: { isCurrent: false } }
+      );
+    }
 
     // Create new subscription
     const subscriptionData = {
       profileId: profileIdObjectId,
       subscriptionYear,
-      isCurrent: true,
-      subscriptionStatus: MEMBERSHIP_STATUS.ACTIVE,
+      isCurrent: shouldBeCurrent,
+      subscriptionStatus: shouldBeCurrent
+        ? MEMBERSHIP_STATUS.ACTIVE
+        : MEMBERSHIP_STATUS.LAPSED,
       startDate,
       endDate,
       rolloverDate,
@@ -455,20 +492,22 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       }
     );
 
-    await publishSubscriptionCurrentUpdatedEvent({
-      newSub,
-      profileIdObjectId,
-      applicationId,
-      memberId,
-      membershipCategory,
-      startDate,
-      userId: resolvedUserId || newSub.userId || null,
-      tenantId,
-      payload,
-      processingDate,
-      submissionDate,
-      applicationDate,
-    });
+    if (shouldBeCurrent) {
+      await publishSubscriptionCurrentUpdatedEvent({
+        newSub,
+        profileIdObjectId,
+        applicationId,
+        memberId,
+        membershipCategory,
+        startDate,
+        userId: resolvedUserId || newSub.userId || null,
+        tenantId,
+        payload,
+        processingDate,
+        submissionDate,
+        applicationDate,
+      });
+    }
   } catch (error) {
     // Enhanced error logging with multiple console methods to ensure visibility
     const errorDetails = {
