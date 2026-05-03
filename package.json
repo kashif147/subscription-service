@@ -14,9 +14,9 @@
     "url": "https://github.com/kashif147/subscription-service.git"
   },
   "dependencies": {
-    "@membership/policy-middleware": "github:kashif147/policy-middleware#gateway",
+    "@membership/policy-middleware": "git+https://github.com/kashif147/policy-middleware.git#gateway",
     "@projectShell/logging-lib": "git+https://github.com/kashif147/logging-lib.git#main",
-    "@projectShell/rabbitmq-middleware": "file:../rabbitmq-middleware",
+    "@projectShell/rabbitmq-middleware": "git+https://github.com/kashif147/rabbitmq-middleware.git#main",
     "amqplib": "^0.10.9",
     "axios": "^1.15.0",
     "bcryptjs": "^3.0.2",
