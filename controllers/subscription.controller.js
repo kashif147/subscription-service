@@ -32,8 +32,6 @@ const {
   getSubscriptionYearsForTenant,
 } = require("../services/subscriptionYearMeta.service");
 
-const MEMBERSHIP_CANCEL_GRACE_DAYS = 28;
-
 function requestHasUsableFilters(bodyFilters) {
   if (
     !bodyFilters ||
@@ -1293,16 +1291,9 @@ async function undoResignMembership(req, res) {
   }
 }
 
-function endOfCancellationGracePeriod(dateCancelled) {
-  const d = new Date(dateCancelled);
-  if (isNaN(d.getTime())) return null;
-  const end = new Date(d.getTime());
-  end.setUTCDate(end.getUTCDate() + MEMBERSHIP_CANCEL_GRACE_DAYS);
-  return end;
-}
-
 /**
- * Cancel membership (CRM): status Cancelled, 28-day grace; portal role demoted after grace via sweep event.
+ * Cancel membership (CRM): status Cancelled; no grace period on cancellation.
+ * Portal Member → Non-Member is handled by a separate job (not grace-ended sweep).
  * PUT /api/v1/subscriptions/cancel/:profileId
  */
 async function cancelMembership(req, res) {
@@ -1332,11 +1323,6 @@ async function cancelMembership(req, res) {
       return res.fail("Invalid dateCancelled format");
     }
 
-    const gracePeriodEnd = endOfCancellationGracePeriod(cancelledAt);
-    if (!gracePeriodEnd) {
-      return res.fail("Could not compute grace period end");
-    }
-
     let updatedByObjectId = null;
     if (req.userId && req.tenantId) {
       try {
@@ -1361,7 +1347,7 @@ async function cancelMembership(req, res) {
       cancellation: {
         dateCancelled: cancelledAt,
         reason: String(reason).trim(),
-        gracePeriodEnd,
+        gracePeriodEnd: null,
         reinstated: false,
         portalRoleDemotionPublishedAt: null,
       },
@@ -1414,7 +1400,7 @@ async function cancelMembership(req, res) {
     }
 
     return res.success({
-      message: "Membership cancelled; portal role demotes after grace period",
+      message: "Membership cancelled",
       data: {
         subscriptionId: currentSubscription._id,
         profileId: currentSubscription.profileId,

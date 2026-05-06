@@ -11,7 +11,9 @@ const MEMBERSHIP_EVENTS = {
 	SUBSCRIPTION_CANCELLATION_UNDONE: "members.subscription.cancellation.undone.v1",
 	/** CRM cancellation: subscription status set to Cancelled → profile-service deactivates personal details by applicationId */
 	SUBSCRIPTION_CANCELLED: "members.subscription.cancelled.v1",
-	/** Published when cancellation grace period ends → user-service demotes portal user to NON-MEMBER */
+	/** In-app / push notification (notification-service) */
+	MEMBER_NOTIFICATION_REQUESTED: "members.member.notification.requested.v1",
+	/** Legacy: published when cancellation.gracePeriodEnd has passed (sweep). New cancels use null grace; separate job demotes portal users. */
 	SUBSCRIPTION_CANCEL_GRACE_ENDED: "members.subscription.cancel.grace.ended.v1",
 	REMINDER_BATCH_BUILD_REQUESTED: "members.reminder.batch.build.requested.v1",
 	REMINDER_BATCH_EXECUTE_REQUESTED: "members.reminder.batch.execute.requested.v1",

@@ -1,3 +1,8 @@
+/**
+ * Publishes SUBSCRIPTION_CANCEL_GRACE_ENDED for cancelled subscriptions that still have a
+ * non-null gracePeriodEnd in the past (legacy data). New cancellations use gracePeriodEnd: null
+ * and are not picked up here; portal demotion uses a separate job.
+ */
 const Subscription = require("../models/subscription.model");
 const { MEMBERSHIP_STATUS } = require("../constants/enums");
 const { publisher } = require("@projectShell/rabbitmq-middleware");

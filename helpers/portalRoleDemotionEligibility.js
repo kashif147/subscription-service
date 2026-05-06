@@ -1,6 +1,6 @@
 /**
- * Nightly portal / Member-role demotion after cancellation.
- * Product-defined rules (e.g. "still unpaid", exact calendar window) plug in here later.
+ * Used by cancellationGraceSweep for legacy rows that still have cancellation.gracePeriodEnd set.
+ * New cancellations store gracePeriodEnd: null; portal Member→Non-Member uses a separate job.
  *
  * @param {import("mongoose").Document | object} subscription
  * @param {Date} [now]

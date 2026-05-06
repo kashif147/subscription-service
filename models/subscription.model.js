@@ -51,7 +51,10 @@ const SubscriptionSchema = new mongoose.Schema(
       },
       dateCancelled: Date, // Date of cancellation
       reason: String, // Reason for cancellation
-      gracePeriodEnd: Date, // Date of the end of the grace period dateCancelled + 28 days
+      gracePeriodEnd: {
+        type: Date,
+        default: null,
+      }, // Legacy: populated end of grace; new cancellations use null (portal demotion via separate job)
       reinstated: { type: Boolean, default: false }, // True if the subscription is reinstated
       // Set when members.subscription.cancel.grace.ended.v1 is published for user-service
       portalRoleDemotionPublishedAt: { type: Date, default: null },

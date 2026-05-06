@@ -71,7 +71,7 @@ router.get("/", ensureAuthenticated, getSubscriptions);
 // CRM-only endpoint: Resign membership for a profile (immediate portal demotion)
 router.put("/resign/:profileId", ensureAuthenticated, resignMembership);
 
-// CRM-only: cancel with 28-day grace; portal demotion after gracePeriodEnd (sweep)
+// CRM-only: cancel (no grace period); portal Member→Non-Member via separate job
 router.put("/cancel/:profileId", ensureAuthenticated, cancelMembership);
 
 // CRM-only endpoint: Undo resignation for a profile

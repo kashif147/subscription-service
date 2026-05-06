@@ -105,8 +105,12 @@ if (process.env.RABBIT_URL) {
       const {
         startPostgraduateStudentCategoryRenewalJob,
       } = require("./jobs/postgraduateStudentCategoryRenewal.job.js");
+      const {
+        startUndergraduateGraduationCancellationJob,
+      } = require("./jobs/undergraduateGraduationCancellation.job.js");
       startCancellationGraceSweep();
       startPostgraduateStudentCategoryRenewalJob();
+      startUndergraduateGraduationCancellationJob();
       console.log(
         "✅ RabbitMQ fully initialized with middleware (subscription-service)",
       );
@@ -125,8 +129,12 @@ if (process.env.RABBIT_URL) {
     const {
       stopPostgraduateStudentCategoryRenewalJob,
     } = require("./jobs/postgraduateStudentCategoryRenewal.job.js");
+    const {
+      stopUndergraduateGraduationCancellationJob,
+    } = require("./jobs/undergraduateGraduationCancellation.job.js");
     stopCancellationGraceSweep();
     stopPostgraduateStudentCategoryRenewalJob();
+    stopUndergraduateGraduationCancellationJob();
     await shutdownEventSystem();
     process.exit(0);
   });
@@ -139,8 +147,12 @@ if (process.env.RABBIT_URL) {
     const {
       stopPostgraduateStudentCategoryRenewalJob,
     } = require("./jobs/postgraduateStudentCategoryRenewal.job.js");
+    const {
+      stopUndergraduateGraduationCancellationJob,
+    } = require("./jobs/undergraduateGraduationCancellation.job.js");
     stopCancellationGraceSweep();
     stopPostgraduateStudentCategoryRenewalJob();
+    stopUndergraduateGraduationCancellationJob();
     await shutdownEventSystem();
     process.exit(0);
   });

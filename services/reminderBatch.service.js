@@ -39,7 +39,6 @@ const {
   publishReminderCommsRequested,
 } = require("../rabbitMQ/publishers/reminder.comms.requested.publisher.js");
 
-const MEMBERSHIP_CANCEL_GRACE_DAYS = 28;
 const CHUNK = REMINDER_BATCH_BUILD_EXECUTE_CHUNK_SIZE;
 
 function workerReq(req, tenantId) {
@@ -65,14 +64,6 @@ function isFreeOrExcludedCategory(category) {
   return REMINDER_BATCH_EXCLUDED_MEMBERSHIP_CATEGORIES.some(
     (x) => n === x || n.includes(x)
   );
-}
-
-function endOfCancellationGracePeriod(dateCancelled) {
-  const d = new Date(dateCancelled);
-  if (Number.isNaN(d.getTime())) return null;
-  const end = new Date(d.getTime());
-  end.setUTCDate(end.getUTCDate() + MEMBERSHIP_CANCEL_GRACE_DAYS);
-  return end;
 }
 
 async function resolveCrmUserObjectId(req) {
@@ -599,19 +590,17 @@ async function processExecuteMemberChunk({
       });
     } else if (batch.kind === REMINDER_BATCH_KIND.CANCELLATION) {
       if (m.tier !== REMINDER_BATCH_TIER.CANCEL) continue;
-      const graceEnd = endOfCancellationGracePeriod(executedAt);
-      if (!graceEnd) continue;
       sub.cancellation = {
         source: CANCELLATION_SOURCE.ARREARS,
         dateCancelled: executedAt,
         reason: "Reminder cancellation batch",
-        gracePeriodEnd: graceEnd,
+        gracePeriodEnd: null,
         reinstated: false,
         portalRoleDemotionPublishedAt: null,
       };
       ensureRemindersSubdoc(sub);
       sub.reminders.cancellationBatchNotifiedAt = executedAt;
-      sub.reminders.scheduledEnforcementDate = graceEnd;
+      sub.reminders.scheduledEnforcementDate = executedAt;
       sub.reminders.reminderCancellationBatchId = batch._id;
       sub.subscriptionStatus = MEMBERSHIP_STATUS.CANCELLED;
       sub.isCurrent = false;
