@@ -241,11 +241,15 @@ async function enhanceSubscriptionsWithAggregation(subscriptions, req) {
         const netCents = Number(summary?.net);
         const latestInvoiceAmountCents = Number(summary?.latestInvoice?.amount);
         const summaryLastPaymentAmountCents = Number(summary?.lastPayment?.amount);
+        const centsToEur = (v) =>
+          Number.isFinite(Number(v)) ? Number(v) / 100 : null;
         const financialDetails = {
-          // Outstanding in grid should match account summary net (AR outstanding) when available.
           outstandingBalance:
-            Number.isFinite(netCents) ? netCents / 100 : fallbackFinancialDetails.outstandingBalance,
-          // Membership fee should match latest invoice amount when available.
+            Number.isFinite(summary?.outstandingBalance)
+              ? centsToEur(summary.outstandingBalance)
+              : Number.isFinite(netCents)
+                ? netCents / 100
+                : fallbackFinancialDetails.outstandingBalance,
           membershipFee:
             Number.isFinite(latestInvoiceAmountCents)
               ? latestInvoiceAmountCents / 100
@@ -256,6 +260,11 @@ async function enhanceSubscriptionsWithAggregation(subscriptions, req) {
               : fallbackFinancialDetails.lastPaymentAmount,
           lastPaymentDate:
             summary?.lastPayment?.date || fallbackFinancialDetails.lastPaymentDate || null,
+          availableCredit: centsToEur(summary?.availableCredit),
+          refundableBalance: centsToEur(summary?.refundableBalance),
+          deferredIncomeBalance: centsToEur(summary?.deferredIncomeBalance),
+          writtenOffBalance: centsToEur(summary?.writtenOffBalance),
+          unreconciledClearingBalance: centsToEur(summary?.unreconciledClearingBalance),
         };
 
         // Resolve actual user email from profile (preferredEmail can be "personal"/"work" – use personalEmail/workEmail)
@@ -390,6 +399,12 @@ async function enhanceSubscriptionsWithAggregation(subscriptions, req) {
             lastPaymentDate: financialDetails.lastPaymentDate ?? null,
             membershipFee: financialDetails.membershipFee ?? null,
             outstandingBalance: financialDetails.outstandingBalance ?? null,
+            availableCredit: financialDetails.availableCredit ?? null,
+            refundableBalance: financialDetails.refundableBalance ?? null,
+            deferredIncomeBalance: financialDetails.deferredIncomeBalance ?? null,
+            writtenOffBalance: financialDetails.writtenOffBalance ?? null,
+            unreconciledClearingBalance:
+              financialDetails.unreconciledClearingBalance ?? null,
           },
         };
       })

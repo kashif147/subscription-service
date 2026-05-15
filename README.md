@@ -14,6 +14,8 @@ Default rule id: **`arrears_balance_plus_receipt_age_v1`** (`constants/enums.js`
 
 Base path: **`/api/v1/reminder-batches`**.
 
+**Staging test data & tier rules:** see [`docs/reminder-batch-test-data-and-process.md`](docs/reminder-batch-test-data-and-process.md) and run `npm run seed:reminder-batch-test` (uses `.env.staging` → `MONGO_URI`).
+
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/` | Create batch header |
