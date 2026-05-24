@@ -460,6 +460,12 @@ async function getSubscriptions(req, res) {
       query.subscriptionStatus = statusTrim;
     }
 
+    const paymentTypeTrim =
+      req.query.paymentType != null ? String(req.query.paymentType).trim() : "";
+    if (paymentTypeTrim) {
+      query.paymentType = paymentTypeTrim;
+    }
+
     console.log("🔍 Step 1: Fetching subscriptions from DB...");
     let subscriptions = await Subscription.find(query)
       .sort({ createdAt: -1 })
