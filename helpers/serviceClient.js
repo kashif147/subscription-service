@@ -442,9 +442,35 @@ async function fetchReminderEligibilityBulk(memberIds, tenantId, asOf) {
   return [];
 }
 
+async function fetchProfilesByMembershipNumbers(membershipNumbers, tenantId, req) {
+  const ids = [...new Set((membershipNumbers || []).map((n) => String(n).trim()).filter(Boolean))];
+  if (!ids.length) return [];
+
+  try {
+    const url = `${PROFILE_SERVICE_URL}/api/profile/lookup-by-membership`;
+    const response = await axios.post(
+      url,
+      { membershipNumbers: ids },
+      {
+        headers: buildServiceHeaders(req, tenantId),
+        timeout: 15000,
+      }
+    );
+    const list = response.data?.data;
+    return Array.isArray(list) ? list : [];
+  } catch (error) {
+    console.error(
+      "[serviceClient] lookup-by-membership failed:",
+      error.response?.status || error.message
+    );
+    return [];
+  }
+}
+
 module.exports = {
   createInternalWorkerReq,
   fetchProfilesByIds,
+  fetchProfilesByMembershipNumbers,
   fetchPaymentsByMemberIds,
   fetchMemberSummariesByMemberIds,
   fetchReminderEligibilityBulk,

@@ -2,9 +2,9 @@
 
 ## Reminder eligibility rule v1
 
-Default rule id: **`arrears_balance_plus_receipt_age_v1`** (`constants/enums.js` → `REMINDER_BATCH_RULE_VERSION_DEFAULT`). The string is unchanged so existing batch snapshots stay comparable; it still describes **1400 arrears bucket + receipt age**, not the product name “reminder batch”.
+Default rule id: **`arrears_balance_plus_receipt_age_v1`** (`constants/enums.js` → `REMINDER_BATCH_RULE_VERSION_DEFAULT`). The string is unchanged so existing batch snapshots stay comparable; rule behaviour is **1400 balance vs pro‑rata minimum** (~90 days of annual fee). **Receipt age alone no longer clears delinquency** while balance remains above the threshold. **Payment after last batch execute** still excludes a member for that build.
 
-- **Calendar days:** delinquency age = days from **`lastReceiptGlDate`** (latest `GLTransaction` with `docType: Receipt` and a member credit on **1400** or **2020**) to **`balanceAsOf`** (batch snapshot time).
+- **Calendar days:** `REMINDER_BATCH_DELINQUENCY_DAYS` (90) is used only in the **pro‑rata minimum balance** formula, not as a standalone receipt-age gate.
 - **Debt:** use **1400 `arrears`** materialized balance from account-service; combine with subscription/fee rules in the batch builder.
 - **Allocation (posting):** member receipts apply **arrears → current → advance**; refunds reverse **advance → 1400** (see account-service).
 
@@ -99,7 +99,7 @@ Cancellation batch execute sets `cancellation` + 28-day `gracePeriodEnd` (same s
 
 ### Not implemented yet
 
-Full communication-service delivery workers (SES/SMS), dedicated audit events, CRM UI wiring to live APIs.
+Full communication-service email/SMS/letter delivery workers (in-app notifications are sent via `MEMBER_NOTIFICATION_REQUESTED` from reminder batch comms and DD unpaid handlers). Dedicated audit events. CRM detail pages still use mock member data for batch drill-down (list API is wired).
 
 ### Frontend (CRA)
 

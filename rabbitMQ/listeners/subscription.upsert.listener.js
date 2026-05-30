@@ -3,6 +3,10 @@ const { consumer } = require("@projectShell/rabbitmq-middleware");
 const {
   publishSubscriptionCurrentUpdated,
 } = require("../publishers/subscription.current.updated.publisher.js");
+const {
+  fetchProfilesByIds,
+  createInternalWorkerReq,
+} = require("../../helpers/serviceClient");
 const Subscription = require("../../models/subscription.model");
 const mongoose = require("mongoose");
 const {
@@ -88,9 +92,22 @@ function parseDateOnlyAsUtcNoon(value) {
   );
 }
 
+async function resolveMemberIdForPublish(profileIdObjectId, memberId, tenantId) {
+  if (memberId != null && String(memberId).trim() !== "") {
+    return String(memberId).trim();
+  }
+  const profiles = await fetchProfilesByIds(
+    [profileIdObjectId],
+    tenantId,
+    createInternalWorkerReq(tenantId)
+  );
+  const num = profiles[0]?.membershipNumber;
+  return num != null && String(num).trim() !== "" ? String(num).trim() : null;
+}
+
 async function publishSubscriptionCurrentUpdatedEvent({
   newSub,
-  profileIdObjectId: _profileIdObjectId,
+  profileIdObjectId,
   applicationId,
   memberId,
   membershipCategory,
@@ -102,9 +119,21 @@ async function publishSubscriptionCurrentUpdatedEvent({
   submissionDate,
   applicationDate,
 }) {
+  const resolvedMemberId = await resolveMemberIdForPublish(
+    profileIdObjectId,
+    memberId,
+    tenantId
+  );
+  if (!resolvedMemberId) {
+    console.warn(
+      "[SUBSCRIPTION_UPSERT_LISTENER] subscription.current.updated skipped — no membershipNumber on profile",
+      { profileId: profileIdObjectId?.toString?.() }
+    );
+    return { success: false, error: "missing_membership_number" };
+  }
   return publishSubscriptionCurrentUpdated(newSub, {
     applicationId,
-    memberId,
+    memberId: resolvedMemberId,
     membershipCategory,
     startDate,
     userId,

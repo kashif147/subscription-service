@@ -2,7 +2,11 @@ const {
   REMINDER_BATCH_MIN_BALANCE_CENTS,
   REMINDER_BATCH_DELINQUENCY_DAYS,
 } = require("../constants/reminderBatch.constants");
-const { REMINDER_BATCH_TIER } = require("../constants/enums");
+const {
+  REMINDER_BATCH_TIER,
+  REMINDER_BATCH_EXCLUSION_REASON,
+  REMINDER_BATCH_KIND,
+} = require("../constants/enums");
 const { getExpectedAnnualFeeCents } = require("./serviceClient");
 
 /** Batch pipeline state on subscription (`reminders` subdoc object). */
@@ -91,6 +95,10 @@ function getReminderMinBalanceCents(membershipCategory) {
 }
 
 /**
+ * Delinquent when net 1400 (arrears + current) is at least the pro-rata minimum (~90 days of
+ * annual fee). Receipt age alone does not clear delinquency while balance remains above the
+ * threshold — that prevents small payments from dropping members off reminder batches.
+ *
  * @param {number} [proRataCalendarYear] - if set, min balance uses this year (e.g. batch run year); else `new Date()`.
  */
 function isFinanciallyDelinquent(
@@ -99,21 +107,85 @@ function isFinanciallyDelinquent(
   membershipCategory,
   proRataCalendarYear
 ) {
-  const as = asOf instanceof Date ? asOf : new Date(asOf);
-  if (Number.isNaN(as.getTime())) return false;
   const minCents = Number.isFinite(proRataCalendarYear)
     ? getReminderMinBalanceCentsForCalendarYear(
         membershipCategory,
         proRataCalendarYear
       )
     : getReminderMinBalanceCents(membershipCategory);
-  if (net1400OwedCents(snap) < minCents) {
-    return false;
+  return net1400OwedCents(snap) >= minCents;
+}
+
+/**
+ * Why a member was excluded from an included batch row (audit / UI).
+ * @param {string} batchKind - REMINDER | CANCELLATION
+ */
+function resolveBatchExclusionReason(
+  subLean,
+  snap,
+  asOf,
+  previousExecuteCompletedAt,
+  proRataCalendarYear,
+  batchKind
+) {
+  if (
+    paymentAfterPreviousBatch(
+      snap?.lastReceiptGlDate,
+      previousExecuteCompletedAt
+    )
+  ) {
+    return REMINDER_BATCH_EXCLUSION_REASON.PAYMENT_IN_WINDOW;
   }
-  const last = snap?.lastReceiptGlDate ? new Date(snap.lastReceiptGlDate) : null;
-  if (!last || Number.isNaN(last.getTime())) return true;
-  const days = calendarDaysBetween(last, as);
-  return days != null && days >= REMINDER_BATCH_DELINQUENCY_DAYS;
+  if (
+    !isFinanciallyDelinquent(
+      snap,
+      asOf,
+      subLean?.membershipCategory,
+      proRataCalendarYear
+    )
+  ) {
+    return REMINDER_BATCH_EXCLUSION_REASON.NOT_DELINQUENT;
+  }
+
+  const st = remindersState(subLean);
+  if (batchKind === REMINDER_BATCH_KIND.REMINDER && st.reminder3At) {
+    return REMINDER_BATCH_EXCLUSION_REASON.TIER_GATE;
+  }
+  if (batchKind === REMINDER_BATCH_KIND.CANCELLATION && !st.reminder3At) {
+    return REMINDER_BATCH_EXCLUSION_REASON.TIER_GATE;
+  }
+  return REMINDER_BATCH_EXCLUSION_REASON.TIER_GATE;
+}
+
+/** True when subscription has any batch-pipeline reminder timestamp set. */
+function hasActiveReminderPipeline(st) {
+  const r = remindersState(st);
+  return !!(r.reminder1At || r.reminder2At || r.reminder3At);
+}
+
+/**
+ * Highest reminder step already recorded (3 > 2 > 1 > 0).
+ * @param {object} subLean
+ * @returns {0|1|2|3}
+ */
+function highestReminderStep(subLean) {
+  const st = remindersState(subLean);
+  if (st.reminder3At) return 3;
+  if (st.reminder2At) return 2;
+  if (st.reminder1At) return 1;
+  return 0;
+}
+
+/**
+ * Which reminder field to clear for a one-step partial-payment rollback.
+ * @returns {"reminder3At"|"reminder2At"|"reminder1At"|null}
+ */
+function reminderFieldToStepBack(subLean) {
+  const st = remindersState(subLean);
+  if (st.reminder3At) return "reminder3At";
+  if (st.reminder2At) return "reminder2At";
+  if (st.reminder1At) return "reminder1At";
+  return null;
 }
 
 /**
@@ -194,6 +266,11 @@ module.exports = {
   classifyMaxReminderTier,
   classifyCancellationTier,
   isFinanciallyDelinquent,
+  resolveBatchExclusionReason,
+  hasActiveReminderPipeline,
+  highestReminderStep,
+  reminderFieldToStepBack,
+  remindersState,
   getReminderMinBalanceCents,
   getReminderMinBalanceCentsForCalendarYear,
   net1400OwedCents,

@@ -13,6 +13,8 @@ const MEMBERSHIP_EVENTS = {
 	SUBSCRIPTION_CANCELLED: "members.subscription.cancelled.v1",
 	/** In-app / push notification (notification-service) */
 	MEMBER_NOTIFICATION_REQUESTED: "members.member.notification.requested.v1",
+	PAYMENT_RECEIPT_POSTED: "members.payment.receipt.posted.v1",
+	DIRECT_DEBIT_COLLECTION_UNPAID: "directdebit.collection.unpaid.v1",
 	/** Legacy: published when cancellation.gracePeriodEnd has passed (sweep). New cancels use null grace; separate job demotes portal users. */
 	SUBSCRIPTION_CANCEL_GRACE_ENDED: "members.subscription.cancel.grace.ended.v1",
 	REMINDER_BATCH_BUILD_REQUESTED: "members.reminder.batch.build.requested.v1",

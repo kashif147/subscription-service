@@ -23,7 +23,17 @@ Implemented in `helpers/reminderBatchTier.js` → `isFinanciallyDelinquent`.
 Roughly:
 
 1. **1400 debt**: `net1400ArrearsCents + net1400CurrentCents` must be at least a **minimum** amount. The minimum is **pro‑rated** from the member’s **annual fee** for the **current UTC calendar year** (see `getReminderMinBalanceCentsForCalendarYear`); if the category has no fee row, a **floor** applies (`REMINDER_BATCH_MIN_BALANCE_CENTS`, typically 1 cent).
-2. **Receipt age**: If there is a **last receipt** GL date on 1400/2020, calendar days from that date to the batch **`balanceAsOf`** must be **≥ `REMINDER_BATCH_DELINQUENCY_DAYS`** (90). If there is **no** qualifying receipt, delinquency can still pass on **balance alone** (see code path).
+2. **Between batches:** if **last receipt** GL date is **after** the previous batch **`executeCompletedAt`**, the member is excluded for that build (`paymentAfterPreviousBatch`). A recent small payment does **not** clear delinquency while **1400 balance remains above the pro‑rata minimum**.
+
+**Reminder pipeline on payment**
+
+| Payment outcome | Reminder effect |
+|-----------------|-----------------|
+| Balance drops **below** pro-rata minimum (settled) | Clear **all** of `reminder1At` / `reminder2At` / `reminder3At` |
+| **Partial** payment — still delinquent but in pipeline | Step back **one** level: clear R3 only, or R2 only, or R1 only |
+| Still delinquent, no prior reminders | No change |
+
+Ledger allocation: receipts **arrears → current → advance**; refunds **advance → current → arrears** (`paymentReceiptAllocation.js`).
 
 Members in excluded categories (e.g. strings matching configured free categories) are skipped at build.
 

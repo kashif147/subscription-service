@@ -30,7 +30,12 @@ const {
   getReminderMinBalanceCentsForCalendarYear,
   daysInCalendarYear,
   reminderTierAnchorDate,
+  resolveBatchExclusionReason,
 } = require("../helpers/reminderBatchTier");
+const {
+  clearRemindersIfSettled,
+  CLEARED_REASON_BUILD,
+} = require("./reminderClear.service");
 const { AppError } = require("../errors/AppError");
 const { publisher } = require("@projectShell/rabbitmq-middleware");
 const { MEMBERSHIP_EVENTS } = require("../rabbitMQ/events");
@@ -102,13 +107,41 @@ async function findPreviousCompletedBatchInCalendarYear(tenantId, kind, forYear)
 }
 
 async function createReminderBatch(req, body) {
-  const { name, kind, batchDate, referencePeriod, previousReminderBatchId } = body;
+  const {
+    name,
+    kind,
+    batchDate,
+    referencePeriod,
+    previousReminderBatchId,
+    previousCancellationBatchId,
+  } = body;
   if (!name || !String(name).trim()) throw AppError.badRequest("name is required");
   if (!kind || !Object.values(REMINDER_BATCH_KIND).includes(kind)) {
     throw AppError.badRequest("kind must be REMINDER or CANCELLATION");
   }
   const bd = batchDate ? new Date(batchDate) : null;
   if (!bd || Number.isNaN(bd.getTime())) throw AppError.badRequest("batchDate is required");
+
+  const calendarYear = bd.getUTCFullYear();
+  let linkedReminderId = previousReminderBatchId || null;
+  let linkedCancelId = previousCancellationBatchId || null;
+
+  if (kind === REMINDER_BATCH_KIND.REMINDER && !linkedReminderId) {
+    const prev = await findPreviousCompletedBatchInCalendarYear(
+      req.tenantId,
+      REMINDER_BATCH_KIND.REMINDER,
+      calendarYear
+    );
+    if (prev?._id) linkedReminderId = prev._id;
+  }
+  if (kind === REMINDER_BATCH_KIND.CANCELLATION && !linkedCancelId) {
+    const prev = await findPreviousCompletedBatchInCalendarYear(
+      req.tenantId,
+      REMINDER_BATCH_KIND.CANCELLATION,
+      calendarYear
+    );
+    if (prev?._id) linkedCancelId = prev._id;
+  }
 
   const createdBy = await resolveCrmUserObjectId(req);
   const doc = await ReminderBatch.create({
@@ -120,8 +153,10 @@ async function createReminderBatch(req, body) {
     status: REMINDER_BATCH_STATUS.DRAFT,
     ruleVersion: REMINDER_BATCH_RULE_VERSION_DEFAULT,
     balanceAsOf: null,
-    previousReminderBatchId: previousReminderBatchId || null,
-    previousCancellationBatchId: null,
+    previousReminderBatchId:
+      kind === REMINDER_BATCH_KIND.REMINDER ? linkedReminderId : null,
+    previousCancellationBatchId:
+      kind === REMINDER_BATCH_KIND.CANCELLATION ? linkedCancelId : null,
     countsByTier: { r1: 0, r2: 0, r3: 0, cancel: 0 },
     createdBy,
     updatedBy: createdBy,
@@ -286,11 +321,33 @@ async function beginBuildReminderBatch(batchId, tenantId, req) {
       prevExecuteAt = new Date(prev.executeCompletedAt);
     }
   } else {
-    const prev = await findPreviousCompletedBatchInCalendarYear(
-      tenantId,
-      REMINDER_BATCH_KIND.CANCELLATION,
-      calendarYear
-    );
+    let prev = null;
+    if (batch.previousCancellationBatchId) {
+      const linked = await ReminderBatch.findById(
+        batch.previousCancellationBatchId
+      ).lean();
+      if (
+        linked?.executeCompletedAt &&
+        isExecuteCompletedInUtcCalendarYear(
+          linked.executeCompletedAt,
+          calendarYear
+        )
+      ) {
+        prev = linked;
+      } else {
+        prev = await findPreviousCompletedBatchInCalendarYear(
+          tenantId,
+          REMINDER_BATCH_KIND.CANCELLATION,
+          calendarYear
+        );
+      }
+    } else {
+      prev = await findPreviousCompletedBatchInCalendarYear(
+        tenantId,
+        REMINDER_BATCH_KIND.CANCELLATION,
+        calendarYear
+      );
+    }
     if (prev?.executeCompletedAt) {
       prevExecuteAt = new Date(prev.executeCompletedAt);
     }
@@ -404,6 +461,22 @@ async function processBuildSubscriptionChunk({
     }
 
     if (!tier) {
+      const exclusionReason = resolveBatchExclusionReason(
+        sub,
+        snap,
+        asOf,
+        prevExecuteAt,
+        proRataCalendarYear,
+        batchDoc.kind
+      );
+      if (
+        exclusionReason === REMINDER_BATCH_EXCLUSION_REASON.NOT_DELINQUENT
+      ) {
+        await clearRemindersIfSettled(sub, snap, {
+          asOf,
+          clearedReason: CLEARED_REASON_BUILD,
+        }).catch(() => {});
+      }
       bulkDocs.push({
         tenantId,
         batchId: batchDoc._id,
@@ -413,7 +486,7 @@ async function processBuildSubscriptionChunk({
         memberId,
         membershipNumber: memberId,
         included: false,
-        exclusionReason: REMINDER_BATCH_EXCLUSION_REASON.NOT_DELINQUENT,
+        exclusionReason,
         eligibilitySnapshot,
       });
     } else {

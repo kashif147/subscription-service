@@ -8,6 +8,7 @@
     "dev": "nodemon ./bin/subscription-service",
     "seed:subscription-template": "node scripts/seed-subscription-system-default-template.js",
     "seed:reminder-batch-test": "node scripts/seed-reminder-batch-test-data.js",
+    "audit:subs-without-invoice": "node scripts/audit-active-subs-without-invoice.js",
     "test": "node --test tests/*.test.js"
   },
   "repository": {
