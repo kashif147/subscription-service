@@ -4,6 +4,9 @@ const {
   publishSubscriptionCurrentUpdated,
 } = require("../publishers/subscription.current.updated.publisher.js");
 const {
+  publishReportingSnapshotForSubscription,
+} = require("../../helpers/reportingSnapshotPublish.js");
+const {
   fetchProfilesByIds,
   createInternalWorkerReq,
 } = require("../../helpers/serviceClient");
@@ -536,6 +539,25 @@ async function handleSubscriptionUpsertRequested(payload, context) {
         submissionDate,
         applicationDate,
       });
+    }
+
+    try {
+      const profiles = await fetchProfilesByIds(
+        [profileIdObjectId],
+        tenantId,
+        createInternalWorkerReq(tenantId)
+      );
+      await publishReportingSnapshotForSubscription(newSub, {
+        tenantId,
+        correlationId: payload?.correlationId,
+        memberId,
+        profileLean: profiles[0] || null,
+      });
+    } catch (snapErr) {
+      console.warn(
+        "[SUBSCRIPTION_UPSERT_LISTENER] reporting snapshot failed:",
+        snapErr.message
+      );
     }
   } catch (error) {
     // Enhanced error logging with multiple console methods to ensure visibility

@@ -22,6 +22,9 @@ const {
   serializeSubscriptionForAudit,
   publishSubscriptionChangedAudit,
 } = require("../rabbitMQ/publishers/subscription.changed.audit.publisher.js");
+const {
+  publishReportingSnapshotForSubscription,
+} = require("../helpers/reportingSnapshotPublish.js");
 const subscriptionFilterTemplateService = require("../services/subscription.filter.template.service");
 const { AppError } = require("../errors/AppError");
 const {
@@ -874,6 +877,17 @@ async function updateSubscriptionById(req, res) {
       console.error("SUBSCRIPTION_CHANGED audit publish error:", e.message);
     }
 
+    try {
+      await publishReportingSnapshotForSubscription(doc, {
+        tenantId: doc.tenantId || req.tenantId,
+        correlationId: req.correlationId,
+        memberId: memberIdResolved ? String(memberId).trim() : undefined,
+        req,
+      });
+    } catch (e) {
+      console.warn("Reporting snapshot publish error:", e.message);
+    }
+
     return res.success({
       message: "Subscription updated",
       data: {
@@ -1043,6 +1057,15 @@ async function runResignMembershipBySubscriptionId(req, res, subscriptionIdStr) 
         "❌ Error publishing subscription resigned event:",
         error.message
       );
+    }
+
+    try {
+      await publishReportingSnapshotForSubscription(currentSubscription, {
+        tenantId: currentSubscription.tenantId || req.tenantId,
+        req,
+      });
+    } catch (e) {
+      console.warn("Reporting snapshot publish error (resign):", e.message);
     }
 
     return res.success({
@@ -1418,6 +1441,15 @@ async function cancelMembership(req, res) {
       }
     } catch (e) {
       console.error("❌ Error publishing subscription cancelled event:", e.message);
+    }
+
+    try {
+      await publishReportingSnapshotForSubscription(currentSubscription, {
+        tenantId: currentSubscription.tenantId || req.tenantId,
+        req,
+      });
+    } catch (e) {
+      console.warn("Reporting snapshot publish error (cancel):", e.message);
     }
 
     return res.success({
