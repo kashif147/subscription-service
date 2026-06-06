@@ -148,6 +148,17 @@ async function publishSubscriptionCurrentUpdatedEvent({
   });
 }
 
+async function fetchProfileWithRetry(profileIds, tenantId, req, attempts = 3) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const profiles = await fetchProfilesByIds(profileIds, tenantId, req);
+    if (profiles[0]) return profiles[0];
+    if (attempt < attempts - 1) {
+      await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+    }
+  }
+  return null;
+}
+
 async function handleSubscriptionUpsertRequested(payload, context) {
   console.log(
     "🚀 [SUBSCRIPTION_UPSERT_LISTENER] ===== EVENT RECEIVED ====="
@@ -542,7 +553,7 @@ async function handleSubscriptionUpsertRequested(payload, context) {
     }
 
     try {
-      const profiles = await fetchProfilesByIds(
+      const profileLean = await fetchProfileWithRetry(
         [profileIdObjectId],
         tenantId,
         createInternalWorkerReq(tenantId)
@@ -551,7 +562,7 @@ async function handleSubscriptionUpsertRequested(payload, context) {
         tenantId,
         correlationId: payload?.correlationId,
         memberId,
-        profileLean: profiles[0] || null,
+        profileLean,
       });
     } catch (snapErr) {
       console.warn(
