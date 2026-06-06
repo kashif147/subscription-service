@@ -1526,18 +1526,23 @@ async function undoCancelMembership(req, res) {
       { $set: { isCurrent: false } }
     );
 
-    const undoCancelSet = {
-      "cancellation.reinstated": true,
-      isCurrent: true,
-      subscriptionStatus: MEMBERSHIP_STATUS.ACTIVE,
+    const undoCancelUpdate = {
+      $set: {
+        "cancellation.reinstated": true,
+        isCurrent: true,
+        subscriptionStatus: MEMBERSHIP_STATUS.ACTIVE,
+      },
+      $unset: {
+        "cancellation.dateCancelled": "",
+      },
     };
     if (updatedByObjectId) {
-      undoCancelSet["meta.updatedBy"] = updatedByObjectId;
+      undoCancelUpdate.$set["meta.updatedBy"] = updatedByObjectId;
     }
 
     const updatedCancelled = await Subscription.findOneAndUpdate(
       { _id: cancelledSubscription._id },
-      { $set: undoCancelSet },
+      undoCancelUpdate,
       { new: true }
     );
 
@@ -1600,6 +1605,15 @@ async function undoCancelMembership(req, res) {
         "❌ Error publishing subscription current updated (undo cancel):",
         curErr.message
       );
+    }
+
+    try {
+      await publishReportingSnapshotForSubscription(updatedCancelled, {
+        tenantId: updatedCancelled.tenantId || req.tenantId,
+        req,
+      });
+    } catch (e) {
+      console.warn("Reporting snapshot publish error (undo cancel):", e.message);
     }
 
     return res.success({
