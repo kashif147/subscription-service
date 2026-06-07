@@ -199,6 +199,7 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       userId = null,
       userEmail = null,
       isCurrent: payloadIsCurrent = undefined,
+      deactivatePreviousSubscriptionStatus = null,
     } = data || {};
 
     const resolvedUserId =
@@ -381,13 +382,26 @@ async function handleSubscriptionUpsertRequested(payload, context) {
     }
 
     if (shouldBeCurrent) {
+      const demotedStatus =
+        deactivatePreviousSubscriptionStatus &&
+        Object.values(MEMBERSHIP_STATUS).includes(
+          deactivatePreviousSubscriptionStatus,
+        )
+          ? deactivatePreviousSubscriptionStatus
+          : MEMBERSHIP_STATUS.CANCELLED;
+
       await Subscription.updateMany(
         {
           profileId: profileIdObjectId,
           isCurrent: true,
           deleted: { $ne: true },
         },
-        { $set: { isCurrent: false } }
+        {
+          $set: {
+            isCurrent: false,
+            subscriptionStatus: demotedStatus,
+          },
+        }
       );
     }
 
