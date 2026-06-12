@@ -792,6 +792,30 @@ async function updateSubscriptionById(req, res) {
       changedFields.push("payrollNo");
     }
 
+    let workLocation = null;
+    try {
+      const profiles = await fetchProfilesByIds(
+        [doc.profileId],
+        doc.tenantId || req.tenantId,
+        req
+      );
+      workLocation = profiles[0]?.professionalDetails?.workLocation ?? null;
+    } catch (profileFetchError) {
+      console.warn(
+        "updateSubscriptionById: profile fetch for salary deduction validation failed:",
+        profileFetchError.message
+      );
+    }
+
+    const {
+      assertSalaryDeductionAllowedForWorkLocation,
+    } = require("../helpers/workLocationPayment.helper.js");
+    await assertSalaryDeductionAllowedForWorkLocation(
+      { paymentType: doc.paymentType },
+      { workLocation },
+      { req, tenantId: doc.tenantId || req.tenantId }
+    );
+
     await doc.save();
 
     let categoryChangeEventPublished = false;
@@ -899,6 +923,9 @@ async function updateSubscriptionById(req, res) {
       },
     });
   } catch (error) {
+    if (error instanceof AppError) {
+      return res.fail(error.message);
+    }
     console.error("updateSubscriptionById:", error.message);
     return res.serverError(error);
   }

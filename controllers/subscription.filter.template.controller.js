@@ -41,6 +41,18 @@ function canEditSystemDefaultTemplate(req) {
   );
 }
 
+function normalizeTemplateRequestBody(body = {}) {
+  const normalized = { ...body };
+  if (
+    normalized.visibleFilters == null &&
+    Array.isArray(normalized.meta?.visibleToolbarFilters)
+  ) {
+    normalized.visibleFilters = normalized.meta.visibleToolbarFilters;
+  }
+  delete normalized.meta;
+  return normalized;
+}
+
 function isSystemDefaultPreferenceOnlyUpdate(payload = {}) {
   const keys = Object.keys(payload || {}).filter(
     (key) => payload[key] !== undefined,
@@ -80,7 +92,9 @@ exports.createTemplate = async (req, res) => {
   if (!ctx) return;
 
   try {
-    const validated = await filter_template_create.validateAsync(req.body);
+    const validated = await filter_template_create.validateAsync(
+      normalizeTemplateRequestBody(req.body),
+    );
     const template = await subscriptionFilterTemplateService.createTemplate(
       ctx.tenantId,
       ctx.userId,
@@ -158,7 +172,9 @@ exports.updateTemplate = async (req, res) => {
   if (!ctx) return;
 
   try {
-    const validated = await filter_template_update.validateAsync(req.body);
+    const validated = await filter_template_update.validateAsync(
+      normalizeTemplateRequestBody(req.body),
+    );
     const existingTemplate = await subscriptionFilterTemplateService.getTemplateById(
       req.params.templateId,
       ctx.tenantId,

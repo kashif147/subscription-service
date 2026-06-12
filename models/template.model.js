@@ -35,6 +35,10 @@ const TemplateSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       default: {},
     },
+    visibleFilters: {
+      type: [String],
+      default: [],
+    },
     /**
      * User’s default view for this list — only field that means “default view” for CRM users.
      */

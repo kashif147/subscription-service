@@ -67,6 +67,7 @@ class SubscriptionFilterTemplateService {
       filters,
       columns,
       columnLabels,
+      visibleFilters,
       isDefault,
       pinned,
     } =
@@ -94,6 +95,7 @@ class SubscriptionFilterTemplateService {
       filters: filters || {},
       columns: columns || [],
       columnLabels: columnLabels || {},
+      visibleFilters: Array.isArray(visibleFilters) ? visibleFilters : [],
       isDefault: isDefault || false,
       pinned: pinned || false,
     });
@@ -171,6 +173,7 @@ class SubscriptionFilterTemplateService {
       filters,
       columns,
       columnLabels,
+      visibleFilters,
       isDefault,
       pinned,
     } =
@@ -249,6 +252,11 @@ class SubscriptionFilterTemplateService {
     }
     if (columnLabels !== undefined) {
       template.columnLabels = columnLabels;
+    }
+    if (visibleFilters !== undefined) {
+      template.visibleFilters = Array.isArray(visibleFilters)
+        ? visibleFilters
+        : [];
     }
     if (isDefault !== undefined) {
       template.isDefault = isDefault;
