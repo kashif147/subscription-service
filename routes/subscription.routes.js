@@ -20,6 +20,7 @@ const {
   ensureAuthenticated,
   ensureAuthenticatedOrInternal,
 } = require("../middlewares/auth.mw");
+const { mergeProfilesInternal } = require("../controllers/profileMerge.controller");
 
 // Auth or internal (x-internal-request): current subscription only
 const getCurrentOnly = (req, res) => {
@@ -29,6 +30,12 @@ const getCurrentOnly = (req, res) => {
 
 router.get("/profile/:profileId/current", ensureAuthenticatedOrInternal, getCurrentOnly);
 router.get("/profile/:profileId", ensureAuthenticatedOrInternal, getSubscriptionsByProfile);
+
+router.post(
+  "/internal/profile-merge",
+  ensureAuthenticatedOrInternal,
+  mergeProfilesInternal,
+);
 
 // CRM: batch resolve subscriptionStatus by profileId (e.g. account-service batch details)
 router.post(

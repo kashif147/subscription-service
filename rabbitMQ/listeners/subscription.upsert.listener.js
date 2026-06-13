@@ -186,6 +186,63 @@ async function fetchProfileWithRetry(profileIds, tenantId, req, attempts = 3) {
   return null;
 }
 
+/** Profile's current membership row (by currentSubscriptionId, else isCurrent). */
+async function resolveProfileCurrentSubscriptionDoc(
+  profileIdObjectId,
+  tenantId
+) {
+  const profileLean = await fetchProfileWithRetry(
+    [profileIdObjectId],
+    tenantId,
+    createInternalWorkerReq(tenantId)
+  );
+  if (!profileLean) return null;
+
+  const currentSubId = profileLean.currentSubscriptionId;
+  if (currentSubId != null && String(currentSubId).trim() !== "") {
+    const byId = await Subscription.findOne({
+      _id: currentSubId,
+      profileId: profileIdObjectId,
+      deleted: { $ne: true },
+    }).lean();
+    if (byId) return byId;
+  }
+
+  return Subscription.findOne({
+    profileId: profileIdObjectId,
+    isCurrent: true,
+    deleted: { $ne: true },
+  })
+    .sort({ startDate: -1, createdAt: -1 })
+    .lean();
+}
+
+async function findLiveSubscriptionForApplication(
+  profileIdObjectId,
+  applicationId,
+  tenantId
+) {
+  const baseQuery = {
+    profileId: profileIdObjectId,
+    applicationId,
+    deleted: { $ne: true },
+    isCurrent: true,
+    subscriptionStatus: {
+      $in: [MEMBERSHIP_STATUS.ACTIVE, MEMBERSHIP_STATUS.RENEWED],
+    },
+  };
+
+  if (tenantId) {
+    const withTenant = await Subscription.findOne({
+      ...baseQuery,
+      tenantId,
+    }).lean();
+    if (withTenant) return withTenant;
+  }
+
+  return Subscription.findOne(baseQuery).lean();
+}
+
 async function handleSubscriptionUpsertRequested(payload, context) {
   console.log(
     "🚀 [SUBSCRIPTION_UPSERT_LISTENER] ===== EVENT RECEIVED ====="
@@ -331,19 +388,24 @@ async function handleSubscriptionUpsertRequested(payload, context) {
         ? String(applicationId).trim()
         : null;
 
+    const profileCurrentSub = await resolveProfileCurrentSubscriptionDoc(
+      profileIdObjectId,
+      tenantId
+    );
+    const profileHasLiveMembership =
+      isLiveCurrentSubscription(profileCurrentSub);
+
     if (normalizedAppId) {
-      const existingForAppQuery = {
-        profileId: profileIdObjectId,
-        applicationId: normalizedAppId,
-        deleted: { $ne: true },
-      };
-      if (tenantId) {
-        existingForAppQuery.tenantId = tenantId;
-      }
+      const existingForApp = await findLiveSubscriptionForApplication(
+        profileIdObjectId,
+        normalizedAppId,
+        tenantId
+      );
 
-      const existingForApp = await Subscription.findOne(existingForAppQuery);
-
-      if (existingForApp && isLiveCurrentSubscription(existingForApp)) {
+      // Payment-only retry: profile already has live membership AND this application
+      // already has a live current row. Returning members (resigned/cancelled/suspended/
+      // archived/lapsed) always get a new subscription even if a stale Active row exists.
+      if (existingForApp && profileHasLiveMembership) {
         console.log(
           "ℹ️ [SUBSCRIPTION_UPSERT_LISTENER] Live current subscription already exists for this applicationId — payment fields only:",
           {
@@ -409,14 +471,14 @@ async function handleSubscriptionUpsertRequested(payload, context) {
         return;
       }
 
-      if (existingForApp) {
+      if (!profileHasLiveMembership) {
         console.log(
-          "ℹ️ [SUBSCRIPTION_UPSERT_LISTENER] Prior non-live subscription for applicationId — creating new active row:",
+          "ℹ️ [SUBSCRIPTION_UPSERT_LISTENER] Profile has no live current membership — creating new active subscription:",
           {
-            subscriptionId: existingForApp._id,
             applicationId: normalizedAppId,
-            subscriptionStatus: existingForApp.subscriptionStatus,
-            isCurrent: existingForApp.isCurrent,
+            profileCurrentSubscriptionId: profileCurrentSub?._id?.toString?.() ?? null,
+            profileCurrentStatus: profileCurrentSub?.subscriptionStatus ?? null,
+            staleLiveRowForApp: existingForApp?._id?.toString?.() ?? null,
           }
         );
       }
