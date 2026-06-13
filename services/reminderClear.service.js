@@ -12,6 +12,10 @@ const {
   fetchReminderEligibilityBulk,
   createInternalWorkerReq,
 } = require("../helpers/serviceClient");
+const {
+  serializeSubscriptionForAudit,
+  publishSubscriptionChangedAudit,
+} = require("../rabbitMQ/publishers/subscription.changed.audit.publisher.js");
 
 const CLEARED_REASON_PAYMENT = "PAYMENT";
 const CLEARED_REASON_BUILD = "BUILD_NOT_DELINQUENT";
@@ -51,6 +55,7 @@ async function clearRemindersIfSettled(sub, snap, options = {}) {
     return false;
   }
 
+  const beforePlain = serializeSubscriptionForAudit(doc);
   ensureRemindersSubdoc(doc);
   doc.reminders.reminder1At = null;
   doc.reminders.reminder2At = null;
@@ -58,6 +63,25 @@ async function clearRemindersIfSettled(sub, snap, options = {}) {
   doc.reminders.clearedAt = new Date();
   doc.reminders.clearedReason = clearedReason;
   await doc.save();
+
+  await publishSubscriptionChangedAudit({
+    tenantId: doc.tenantId,
+    subscriptionId: doc._id.toString(),
+    profileId: doc.profileId?.toString() || null,
+    applicationId: doc.applicationId || null,
+    actorUserId: null,
+    actorEmail: "system@reminder-clear",
+    changedFields: [
+      "reminders.reminder1At",
+      "reminders.reminder2At",
+      "reminders.reminder3At",
+      "reminders.clearedAt",
+      "reminders.clearedReason",
+    ],
+    before: beforePlain,
+    after: serializeSubscriptionForAudit(doc),
+  }).catch(() => {});
+
   return "cleared_all";
 }
 
@@ -90,11 +114,29 @@ async function stepBackRemindersIfPartialPayment(sub, snap, options = {}) {
     return false;
   }
 
+  const beforePlain = serializeSubscriptionForAudit(doc);
   ensureRemindersSubdoc(doc);
   doc.reminders[field] = null;
   doc.reminders.clearedAt = new Date();
   doc.reminders.clearedReason = CLEARED_REASON_PARTIAL_PAYMENT;
   await doc.save();
+
+  await publishSubscriptionChangedAudit({
+    tenantId: doc.tenantId,
+    subscriptionId: doc._id.toString(),
+    profileId: doc.profileId?.toString() || null,
+    applicationId: doc.applicationId || null,
+    actorUserId: null,
+    actorEmail: "system@reminder-clear",
+    changedFields: [
+      `reminders.${field}`,
+      "reminders.clearedAt",
+      "reminders.clearedReason",
+    ],
+    before: beforePlain,
+    after: serializeSubscriptionForAudit(doc),
+  }).catch(() => {});
+
   return "stepped_back";
 }
 

@@ -1423,6 +1423,16 @@ async function cancelMembership(req, res) {
       isCurrent: true,
       deleted: { $ne: true },
     };
+
+    const existingSubscription = await Subscription.findOne(cancelFilter).lean();
+    if (!existingSubscription) {
+      return res.status(404).json({
+        status: "fail",
+        data: "No active subscription found for this profile",
+      });
+    }
+
+    const beforePlain = serializeSubscriptionForAudit(existingSubscription);
     const cancelSet = {
       cancellation: {
         dateCancelled: cancelledAt,
@@ -1449,6 +1459,28 @@ async function cancelMembership(req, res) {
         status: "fail",
         data: "No active subscription found for this profile",
       });
+    }
+
+    try {
+      const auditResult = await publishSubscriptionChangedAudit({
+        tenantId: currentSubscription.tenantId || req.tenantId,
+        subscriptionId: currentSubscription._id.toString(),
+        profileId: currentSubscription.profileId.toString(),
+        applicationId: currentSubscription.applicationId || null,
+        actorUserId: req.userId || null,
+        actorEmail: req.user?.email || null,
+        changedFields: ["subscriptionStatus", "isCurrent", "cancellation"],
+        before: beforePlain,
+        after: serializeSubscriptionForAudit(currentSubscription),
+      });
+      if (!auditResult.success) {
+        console.error("SUBSCRIPTION_CHANGED audit publish failed (cancel):", {
+          error: auditResult.error,
+          subscriptionId: currentSubscription._id.toString(),
+        });
+      }
+    } catch (e) {
+      console.error("SUBSCRIPTION_CHANGED audit publish error (cancel):", e.message);
     }
 
     try {
@@ -1537,6 +1569,8 @@ async function undoCancelMembership(req, res) {
       });
     }
 
+    const beforePlain = serializeSubscriptionForAudit(cancelledSubscription);
+
     let updatedByObjectId = null;
     if (req.userId && req.tenantId) {
       try {
@@ -1587,6 +1621,33 @@ async function undoCancelMembership(req, res) {
         status: "fail",
         data: "Subscription could not be updated",
       });
+    }
+
+    try {
+      const auditResult = await publishSubscriptionChangedAudit({
+        tenantId: updatedCancelled.tenantId || req.tenantId,
+        subscriptionId: updatedCancelled._id.toString(),
+        profileId: updatedCancelled.profileId.toString(),
+        applicationId: updatedCancelled.applicationId || null,
+        actorUserId: req.userId || null,
+        actorEmail: req.user?.email || null,
+        changedFields: [
+          "subscriptionStatus",
+          "isCurrent",
+          "cancellation.reinstated",
+          "cancellation.dateCancelled",
+        ],
+        before: beforePlain,
+        after: serializeSubscriptionForAudit(updatedCancelled),
+      });
+      if (!auditResult.success) {
+        console.error("SUBSCRIPTION_CHANGED audit publish failed (undo-cancel):", {
+          error: auditResult.error,
+          subscriptionId: updatedCancelled._id.toString(),
+        });
+      }
+    } catch (e) {
+      console.error("SUBSCRIPTION_CHANGED audit publish error (undo-cancel):", e.message);
     }
 
     try {

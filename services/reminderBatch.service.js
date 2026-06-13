@@ -41,6 +41,10 @@ const { publisher } = require("@projectShell/rabbitmq-middleware");
 const { MEMBERSHIP_EVENTS } = require("../rabbitMQ/events");
 const { publishSubscriptionCurrentUpdated } = require("../rabbitMQ/publishers/subscription.current.updated.publisher.js");
 const {
+  serializeSubscriptionForAudit,
+  publishSubscriptionChangedAudit,
+} = require("../rabbitMQ/publishers/subscription.changed.audit.publisher.js");
+const {
   publishReminderCommsRequested,
 } = require("../rabbitMQ/publishers/reminder.comms.requested.publisher.js");
 
@@ -638,13 +642,18 @@ async function processExecuteMemberChunk({
     if (!sub) continue;
 
     if (batch.kind === REMINDER_BATCH_KIND.REMINDER) {
+      const beforePlain = serializeSubscriptionForAudit(sub);
       ensureRemindersSubdoc(sub);
+      let changedField = null;
       if (m.tier === REMINDER_BATCH_TIER.R1 && !sub.reminders.reminder1At) {
         sub.reminders.reminder1At = executedAt;
+        changedField = "reminders.reminder1At";
       } else if (m.tier === REMINDER_BATCH_TIER.R2 && !sub.reminders.reminder2At) {
         sub.reminders.reminder2At = executedAt;
+        changedField = "reminders.reminder2At";
       } else if (m.tier === REMINDER_BATCH_TIER.R3 && !sub.reminders.reminder3At) {
         sub.reminders.reminder3At = executedAt;
+        changedField = "reminders.reminder3At";
       }
       sub.reminders.lastReminderBatchId = batch._id;
       await sub.save();
@@ -657,12 +666,27 @@ async function processExecuteMemberChunk({
         { $set: flagSet, $inc: { executeAttempt: 1 } }
       );
       await publishReminderCommsRequested(m, batch).catch(() => {});
+      if (changedField) {
+        await publishSubscriptionChangedAudit({
+          tenantId: sub.tenantId || tenantId,
+          subscriptionId: sub._id.toString(),
+          profileId: sub.profileId?.toString() || null,
+          applicationId: sub.applicationId || null,
+          actorUserId: r?.userId || null,
+          actorEmail: r?.user?.email || "system@reminder-batch",
+          changedFields: [changedField, "reminders.lastReminderBatchId"],
+          before: beforePlain,
+          after: serializeSubscriptionForAudit(sub),
+          correlationId: queueJobId || batch._id?.toString(),
+        }).catch(() => {});
+      }
       await publishSubscriptionCurrentUpdated(sub, {
         tenantId: sub.tenantId || tenantId,
         memberId: m.memberId,
       });
     } else if (batch.kind === REMINDER_BATCH_KIND.CANCELLATION) {
       if (m.tier !== REMINDER_BATCH_TIER.CANCEL) continue;
+      const beforePlain = serializeSubscriptionForAudit(sub);
       sub.cancellation = {
         source: CANCELLATION_SOURCE.ARREARS,
         dateCancelled: executedAt,
@@ -705,9 +729,32 @@ async function processExecuteMemberChunk({
           tenantId: sub.tenantId || tenantId,
           exchange: "membership.events",
           routingKey: MEMBERSHIP_EVENTS.SUBSCRIPTION_CANCELLED,
-          metadata: { service: "subscription-service", version: "1.0" },
+          metadata: {
+            service: "subscription-service",
+            version: "1.0",
+            source: "reminderBatch",
+          },
         }
       );
+
+      await publishSubscriptionChangedAudit({
+        tenantId: sub.tenantId || tenantId,
+        subscriptionId: sub._id.toString(),
+        profileId: sub.profileId?.toString() || null,
+        applicationId: sub.applicationId || null,
+        actorUserId: r?.userId || null,
+        actorEmail: r?.user?.email || "system@reminder-batch",
+        changedFields: [
+          "cancellation",
+          "subscriptionStatus",
+          "isCurrent",
+          "reminders.cancellationBatchNotifiedAt",
+          "reminders.scheduledEnforcementDate",
+        ],
+        before: beforePlain,
+        after: serializeSubscriptionForAudit(sub),
+        correlationId: queueJobId || batch._id?.toString(),
+      }).catch(() => {});
 
       await publishSubscriptionCurrentUpdated(sub, {
         tenantId: sub.tenantId || tenantId,
