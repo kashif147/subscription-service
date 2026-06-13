@@ -18,6 +18,9 @@ const {
   PAYMENT_TYPE,
   PAYMENT_FREQUENCY,
 } = require("../../constants/enums");
+const {
+  resolveNoFeePaymentFields,
+} = require("../../helpers/noFeeMembershipPayment.helper.js");
 
 function endOfYear(date) {
   const y = date.getUTCFullYear();
@@ -202,6 +205,14 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       deactivatePreviousSubscriptionStatus = null,
     } = data || {};
 
+    const resolvedPayment = resolveNoFeePaymentFields({
+      membershipCategory,
+      paymentType,
+      paymentFrequency,
+    });
+    const effectivePaymentType = resolvedPayment.paymentType;
+    const effectivePaymentFrequency = resolvedPayment.paymentFrequency;
+
     const resolvedUserId =
       userId != null && String(userId).trim() !== ""
         ? String(userId).trim()
@@ -317,16 +328,16 @@ async function handleSubscriptionUpsertRequested(payload, context) {
         );
         const update = {};
         if (
-          paymentType != null &&
-          Object.values(PAYMENT_TYPE).includes(paymentType)
+          effectivePaymentType != null &&
+          Object.values(PAYMENT_TYPE).includes(effectivePaymentType)
         ) {
-          update.paymentType = paymentType;
+          update.paymentType = effectivePaymentType;
         }
         if (
-          paymentFrequency != null &&
-          Object.values(PAYMENT_FREQUENCY).includes(paymentFrequency)
+          effectivePaymentFrequency != null &&
+          Object.values(PAYMENT_FREQUENCY).includes(effectivePaymentFrequency)
         ) {
-          update.paymentFrequency = paymentFrequency;
+          update.paymentFrequency = effectivePaymentFrequency;
         }
         if (payrollNo != null) {
           update.payrollNo = payrollNo;
@@ -427,19 +438,19 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       subscriptionData.membershipCategory = membershipCategory;
     }
     if (
-      paymentType != null &&
-      Object.values(PAYMENT_TYPE).includes(paymentType)
+      effectivePaymentType != null &&
+      Object.values(PAYMENT_TYPE).includes(effectivePaymentType)
     ) {
-      subscriptionData.paymentType = paymentType;
+      subscriptionData.paymentType = effectivePaymentType;
     }
     if (payrollNo != null && payrollNo !== "") {
       subscriptionData.payrollNo = payrollNo;
     }
     if (
-      paymentFrequency != null &&
-      Object.values(PAYMENT_FREQUENCY).includes(paymentFrequency)
+      effectivePaymentFrequency != null &&
+      Object.values(PAYMENT_FREQUENCY).includes(effectivePaymentFrequency)
     ) {
-      subscriptionData.paymentFrequency = paymentFrequency;
+      subscriptionData.paymentFrequency = effectivePaymentFrequency;
     }
 
     // Add tenantId if provided (for multi-tenant support)

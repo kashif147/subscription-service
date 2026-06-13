@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 const { randomUUID } = require("crypto");
 const Subscription = require("../models/subscription.model");
 const User = require("../models/user.model");
-const { USER_TYPE, MEMBERSHIP_STATUS, PAYMENT_TYPE } = require("../constants/enums");
+const { USER_TYPE, MEMBERSHIP_STATUS, PAYMENT_TYPE, PAYMENT_FREQUENCY } = require("../constants/enums");
 const { publisher } = require("@projectShell/rabbitmq-middleware");
 const { MEMBERSHIP_EVENTS } = require("../rabbitMQ/events");
 const {
@@ -805,6 +805,15 @@ async function updateSubscriptionById(req, res) {
         "updateSubscriptionById: profile fetch for salary deduction validation failed:",
         profileFetchError.message
       );
+    }
+
+    const {
+      isNoFeeMembershipCategory,
+    } = require("../helpers/noFeeMembershipPayment.helper.js");
+    if (isNoFeeMembershipCategory(doc.membershipCategory)) {
+      doc.paymentType = PAYMENT_TYPE.CASH;
+      doc.paymentFrequency = PAYMENT_FREQUENCY.ANNUALLY;
+      doc.payrollNo = null;
     }
 
     const {

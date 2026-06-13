@@ -30,6 +30,8 @@ exports.PAYMENT_TYPE = {
   DIRECT_DEBIT: "Direct Debit",
   CARD_PAYMENT: "Credit Card",
   SBO_PAYMENT: "Standing Order",
+  CHEQUE: "Cheque",
+  CASH: "Cash",
 };
 
 // Payment Frequency Enums
