@@ -22,6 +22,28 @@ const {
   resolveNoFeePaymentFields,
 } = require("../../helpers/noFeeMembershipPayment.helper.js");
 
+/**
+ * Membership lines that are not active — merge/approval onto an existing profile
+ * (resigned, cancelled, suspended, archived, lapsed, etc.) must create a new subscription.
+ */
+const NON_LIVE_SUBSCRIPTION_STATUSES = new Set([
+  MEMBERSHIP_STATUS.RESIGNED,
+  MEMBERSHIP_STATUS.CANCELLED,
+  MEMBERSHIP_STATUS.SUSPENDED,
+  MEMBERSHIP_STATUS.ARCHIVED,
+  MEMBERSHIP_STATUS.LAPSED,
+]);
+
+function isLiveCurrentSubscription(sub) {
+  if (!sub || sub.deleted === true) return false;
+  if (sub.isCurrent !== true) return false;
+  if (NON_LIVE_SUBSCRIPTION_STATUSES.has(sub.subscriptionStatus)) return false;
+  return (
+    sub.subscriptionStatus === MEMBERSHIP_STATUS.ACTIVE ||
+    sub.subscriptionStatus === MEMBERSHIP_STATUS.RENEWED
+  );
+}
+
 function endOfYear(date) {
   const y = date.getUTCFullYear();
   return new Date(Date.UTC(y, 11, 31, 23, 59, 59, 999));
@@ -119,6 +141,7 @@ async function publishSubscriptionCurrentUpdatedEvent({
   membershipCategory,
   startDate,
   userId,
+  userEmail,
   tenantId,
   payload,
   processingDate,
@@ -143,6 +166,7 @@ async function publishSubscriptionCurrentUpdatedEvent({
     membershipCategory,
     startDate,
     userId,
+    userEmail,
     tenantId,
     correlationId: payload?.correlationId,
     processingDate,
@@ -299,8 +323,9 @@ async function handleSubscriptionUpsertRequested(payload, context) {
     // Demote every current row for this profile (do not filter by tenantId).
     // Legacy rows may have tenantId null/mismatched; scoping tenant here left multiple isCurrent=true.
 
-    // Idempotent payment-only path: same profile + same applicationId as an existing row.
-    // A new applicationId always creates a new subscription document; prior rows (e.g. resigned) stay as history.
+    // Idempotent payment-only path: same profile + same applicationId as an existing **live** row
+    // (isCurrent + Active or Renewed). Resigned/cancelled/suspended/archived/lapsed rows stay as history;
+    // approval creates a new subscription for returning members.
     const normalizedAppId =
       applicationId != null && String(applicationId).trim() !== ""
         ? String(applicationId).trim()
@@ -310,6 +335,7 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       const existingForAppQuery = {
         profileId: profileIdObjectId,
         applicationId: normalizedAppId,
+        deleted: { $ne: true },
       };
       if (tenantId) {
         existingForAppQuery.tenantId = tenantId;
@@ -317,13 +343,14 @@ async function handleSubscriptionUpsertRequested(payload, context) {
 
       const existingForApp = await Subscription.findOne(existingForAppQuery);
 
-      if (existingForApp) {
+      if (existingForApp && isLiveCurrentSubscription(existingForApp)) {
         console.log(
-          "ℹ️ [SUBSCRIPTION_UPSERT_LISTENER] Subscription already exists for this applicationId — payment fields only:",
+          "ℹ️ [SUBSCRIPTION_UPSERT_LISTENER] Live current subscription already exists for this applicationId — payment fields only:",
           {
             subscriptionId: existingForApp._id,
             applicationId: normalizedAppId,
             subscriptionYear,
+            subscriptionStatus: existingForApp.subscriptionStatus,
           }
         );
         const update = {};
@@ -371,6 +398,7 @@ async function handleSubscriptionUpsertRequested(payload, context) {
               membershipCategory ?? subForEvent.membershipCategory,
             startDate: subForEvent.startDate,
             userId: resolvedUserId || subForEvent.userId || null,
+            userEmail,
             tenantId,
             payload,
             processingDate,
@@ -379,6 +407,18 @@ async function handleSubscriptionUpsertRequested(payload, context) {
           });
         }
         return;
+      }
+
+      if (existingForApp) {
+        console.log(
+          "ℹ️ [SUBSCRIPTION_UPSERT_LISTENER] Prior non-live subscription for applicationId — creating new active row:",
+          {
+            subscriptionId: existingForApp._id,
+            applicationId: normalizedAppId,
+            subscriptionStatus: existingForApp.subscriptionStatus,
+            isCurrent: existingForApp.isCurrent,
+          }
+        );
       }
     }
 
@@ -561,6 +601,28 @@ async function handleSubscriptionUpsertRequested(payload, context) {
     );
 
     if (shouldBeCurrent) {
+      let resolvedUserEmail =
+        userEmail != null && String(userEmail).trim() !== ""
+          ? String(userEmail).trim()
+          : null;
+      if (!resolvedUserEmail) {
+        const profileLean = await fetchProfileWithRetry(
+          [profileIdObjectId],
+          tenantId,
+          createInternalWorkerReq(tenantId)
+        );
+        if (profileLean) {
+          const c = profileLean.contactInfo || {};
+          resolvedUserEmail =
+            c.personalEmail ||
+            c.workEmail ||
+            (profileLean.normalizedEmail
+              ? String(profileLean.normalizedEmail).trim()
+              : null) ||
+            null;
+        }
+      }
+
       await publishSubscriptionCurrentUpdatedEvent({
         newSub,
         profileIdObjectId,
@@ -569,6 +631,7 @@ async function handleSubscriptionUpsertRequested(payload, context) {
         membershipCategory,
         startDate,
         userId: resolvedUserId || newSub.userId || null,
+        userEmail: resolvedUserEmail,
         tenantId,
         payload,
         processingDate,

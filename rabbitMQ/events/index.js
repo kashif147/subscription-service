@@ -25,6 +25,9 @@ const MEMBERSHIP_EVENTS = {
 		"members.reminder.batch.monthly.orchestrate.requested.v1",
 	REMINDER_BATCH_COMMS_REQUESTED: "members.reminder.batch.comms.requested.v1",
 	RENEWAL_BATCH_EXECUTE_REQUESTED: "members.renewal.batch.execute.requested.v1",
+	/** Undergraduate graduation → communication-service (letter + email + in-app) */
+	UNDERGRADUATE_GRADUATION_COMMS_REQUESTED:
+		"members.undergraduate.graduation.comms.requested.v1",
 };
 
 module.exports = {

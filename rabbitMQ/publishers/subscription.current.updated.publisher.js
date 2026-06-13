@@ -32,6 +32,10 @@ async function publishSubscriptionCurrentUpdated(subscriptionDoc, ctx = {}) {
   const startDateISO = startDate.toISOString().split("T")[0];
   const userId =
     ctx.userId !== undefined ? ctx.userId : subscriptionDoc.userId ?? null;
+  const userEmail =
+    ctx.userEmail !== undefined && ctx.userEmail !== null && ctx.userEmail !== ""
+      ? ctx.userEmail
+      : null;
   const tenantId = ctx.tenantId ?? subscriptionDoc.tenantId;
 
   let processingDateISO;
@@ -78,6 +82,7 @@ async function publishSubscriptionCurrentUpdated(subscriptionDoc, ctx = {}) {
     applicationId: subscriptionAppId,
     memberId: subscriptionMemberId,
     userId: userId || null,
+    userEmail: userEmail || null,
     tenantId: tenantId || undefined,
     effective: {
       subscriptionDetails: subscriptionDetailsPayload,

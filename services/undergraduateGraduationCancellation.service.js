@@ -21,6 +21,9 @@ const NOTIFICATION_TITLE =
 const NOTIFICATION_BODY =
   "Congratulations on reaching your graduation date. Your Undergraduate Student membership has now ended. We invite you to join as a full member and continue enjoying the benefits of membership.";
 
+const UGRAD_GRADUATION_COMMS_TITLE = NOTIFICATION_TITLE;
+const UGRAD_GRADUATION_COMMS_BODY = NOTIFICATION_BODY;
+
 /** UTC start of calendar day for `d` */
 function utcDayStartMs(d) {
   const x = d instanceof Date ? d : new Date(d);
@@ -451,33 +454,24 @@ async function runUndergraduateGraduationCancellationOnce(options = {}) {
           tenantId: updated.tenantId || tenantId,
           req,
         });
-        if (!identity.userId || !identity.tenantId) {
-          logStructured({
-            phase: "skipped",
-            reason: "notification_no_user_or_tenant",
-            subscriptionId: updated._id.toString(),
-            profileId: updated.profileId?.toString(),
-          });
-        } else {
-          const notifResult = await publisher.publish(
-            MEMBERSHIP_EVENTS.MEMBER_NOTIFICATION_REQUESTED,
+
+        if (identity.userId || identity.userEmail) {
+          const demotionResult = await publisher.publish(
+            MEMBERSHIP_EVENTS.SUBSCRIPTION_CANCEL_GRACE_ENDED,
             {
+              subscriptionId: updated._id.toString(),
+              profileId: identity.profileId,
               tenantId: identity.tenantId,
               userId: identity.userId,
-              title: NOTIFICATION_TITLE,
-              body: NOTIFICATION_BODY,
-              metadata: {
-                type: "UNDERGRADUATE_GRADUATION_MEMBERSHIP_ENDED",
-                subscriptionId: updated._id.toString(),
-                profileId: updated.profileId.toString(),
-                dedupeKey: `ugrad-grad:${updated._id.toString()}`,
-              },
+              userEmail: identity.userEmail,
+              reason: "graduated",
+              gracePeriodEnd: cancelledAt.toISOString(),
             },
             {
-              tenantId: identity.tenantId,
-              correlationId: `ugrad-grad-notify-${correlationId}`,
+              tenantId: identity.tenantId || updated.tenantId || tenantId,
+              correlationId: `ugrad-grad-demotion-${correlationId}`,
               exchange: "membership.events",
-              routingKey: MEMBERSHIP_EVENTS.MEMBER_NOTIFICATION_REQUESTED,
+              routingKey: MEMBERSHIP_EVENTS.SUBSCRIPTION_CANCEL_GRACE_ENDED,
               metadata: {
                 service: "subscription-service",
                 version: "1.0",
@@ -485,27 +479,91 @@ async function runUndergraduateGraduationCancellationOnce(options = {}) {
               },
             }
           );
-          if (notifResult.success) {
-            notified += 1;
+
+          if (demotionResult.success) {
+            await Subscription.updateOne(
+              { _id: updated._id },
+              { $set: { "cancellation.portalRoleDemotionPublishedAt": new Date() } }
+            );
             logStructured({
-              phase: "notification_sent",
+              phase: "portal_demotion_enqueued",
               subscriptionId: updated._id.toString(),
               profileId: updated.profileId?.toString(),
+              userId: identity.userId || null,
             });
           } else {
             logStructured({
               phase: "error",
-              message: "publish_member_notification_failed",
+              message: "publish_portal_demotion_failed",
               subscriptionId: updated._id.toString(),
-              error: notifResult.error,
+              error: demotionResult.error,
             });
             errors += 1;
           }
+        } else {
+          logStructured({
+            phase: "skipped",
+            reason: "demotion_no_user_or_email",
+            subscriptionId: updated._id.toString(),
+            profileId: updated.profileId?.toString(),
+          });
+        }
+
+        const dedupeKey = `ugrad-grad:${updated._id.toString()}`;
+        const commsPayload = {
+          tenantId: updated.tenantId || tenantId,
+          userId: identity.userId || null,
+          profileId: updated.profileId.toString(),
+          subscriptionId: updated._id.toString(),
+          memberId: memberId || null,
+          membershipCategory: updated.membershipCategory || fromCategory,
+          graduationDate:
+            profile.professionalDetails?.graduationDate != null
+              ? new Date(profile.professionalDetails.graduationDate).toISOString()
+              : null,
+          cancelledAt: cancelledAt.toISOString(),
+          title: UGRAD_GRADUATION_COMMS_TITLE,
+          body: UGRAD_GRADUATION_COMMS_BODY,
+          dedupeKey,
+        };
+
+        const commsResult = await publisher.publish(
+          MEMBERSHIP_EVENTS.UNDERGRADUATE_GRADUATION_COMMS_REQUESTED,
+          commsPayload,
+          {
+            tenantId: updated.tenantId || tenantId,
+            correlationId: `ugrad-grad-comms-${correlationId}`,
+            exchange: "membership.events",
+            routingKey: MEMBERSHIP_EVENTS.UNDERGRADUATE_GRADUATION_COMMS_REQUESTED,
+            metadata: {
+              service: "subscription-service",
+              version: "1.0",
+              job: "undergraduateGraduationCancellation",
+            },
+          }
+        );
+
+        if (commsResult.success) {
+          notified += 1;
+          logStructured({
+            phase: "graduation_comms_enqueued",
+            subscriptionId: updated._id.toString(),
+            profileId: updated.profileId?.toString(),
+            hasUserId: Boolean(identity.userId),
+          });
+        } else {
+          logStructured({
+            phase: "error",
+            message: "publish_graduation_comms_failed",
+            subscriptionId: updated._id.toString(),
+            error: commsResult.error,
+          });
+          errors += 1;
         }
       } catch (e) {
         logStructured({
           phase: "error",
-          message: "notification_publish_exception",
+          message: "graduation_comms_publish_exception",
           subscriptionId: updated._id.toString(),
           error: e.message,
         });
