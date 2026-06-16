@@ -232,7 +232,7 @@ async function runPostgraduateStudentCategoryRenewalOnce() {
         userId: doc.userId || null,
         tenantId: doc.tenantId,
         correlationId: `postgrad-renewal-${adjustmentKey}`,
-        skipMembershipApprovedNotification: true,
+        skipMembershipProcessedNotification: true,
       });
     } catch (e) {
       console.error(

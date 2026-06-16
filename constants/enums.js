@@ -2,7 +2,7 @@
 exports.APPLICATION_STATUS = {
   IN_PROGRESS: "in-progress",
   SUBMITTED: "submitted",
-  APPROVED: "approved",
+  PROCESSED: "processed",
   REJECTED: "rejected",
 };
 

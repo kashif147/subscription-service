@@ -1294,7 +1294,7 @@ async function runUndoResignMembershipBySubscriptionId(req, res, subscriptionIdS
       const cur = await publishSubscriptionCurrentUpdated(updatedResigned, {
         tenantId: updatedResigned.tenantId || req.tenantId,
         userId: updatedResigned.userId ?? null,
-        skipMembershipApprovedNotification: true,
+        skipMembershipProcessedNotification: true,
       });
       if (!cur.success) {
         console.error(
