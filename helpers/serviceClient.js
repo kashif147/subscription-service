@@ -6,6 +6,7 @@ const MEMBER_SUMMARY_CACHE_TTL_MS = 60 * 1000;
 const MEMBER_SUMMARY_MAX_RETRIES = 2;
 const MEMBER_SUMMARY_BATCH_CHUNK_SIZE = 1000;
 const memberSummaryCache = new Map();
+const WRITE_OFF_BUCKETS = new Set(["arrears", "current"]);
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -294,6 +295,135 @@ async function fetchMemberSummariesByMemberIds(memberIds, tenantId, req) {
   return out;
 }
 
+function safeDocNoPart(value) {
+  const cleaned = String(value || "")
+    .trim()
+    .replace(/[^A-Za-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return cleaned || "UNKNOWN";
+}
+
+function positiveCents(value) {
+  const cents = Math.round(Number(value) || 0);
+  return cents > 0 ? cents : 0;
+}
+
+function getPositive1400WriteOffBuckets(summary) {
+  const bucketTotals = new Map();
+  for (const row of summary?.buckets || []) {
+    const accountCode = String(row?.accountCode || "").trim();
+    const bucket = String(row?.bucket || "").trim();
+    if (accountCode !== "1400" || !WRITE_OFF_BUCKETS.has(bucket)) continue;
+    const amount = positiveCents(row?.amount);
+    if (amount <= 0) continue;
+    bucketTotals.set(bucket, (bucketTotals.get(bucket) || 0) + amount);
+  }
+
+  const buckets = [...bucketTotals.entries()].map(([bucket, amount]) => ({
+    bucket,
+    amount,
+  }));
+  if (buckets.length) return buckets;
+
+  const arAccount = (summary?.accounts || []).find(
+    (row) => String(row?.accountCode || "").trim() === "1400"
+  );
+  const arAmount = positiveCents(arAccount?.amount);
+  if (arAmount > 0) {
+    return [{ bucket: "arrears", amount: arAmount }];
+  }
+
+  const outstanding = positiveCents(summary?.outstandingBalance);
+  return outstanding > 0 ? [{ bucket: "arrears", amount: outstanding }] : [];
+}
+
+async function postMemberOutstandingWriteOff({
+  memberId,
+  tenantId,
+  req,
+  date,
+  docNoBase,
+  memo,
+  summary = null,
+  requireSummary = false,
+}) {
+  const resolvedMemberId = String(memberId || "").trim();
+  if (!resolvedMemberId) {
+    return { memberId: resolvedMemberId, posted: [], skipped: true, reason: "memberId missing" };
+  }
+
+  let resolvedSummary = summary;
+  if (!resolvedSummary) {
+    const rows = await fetchMemberSummariesByMemberIds(
+      [resolvedMemberId],
+      tenantId,
+      req || createInternalWorkerReq(tenantId)
+    );
+    resolvedSummary = rows?.[0]?.summary || null;
+  }
+
+  if (requireSummary && !resolvedSummary) {
+    throw new Error(
+      `Account summary unavailable for member ${resolvedMemberId}; cannot determine write-off amount`
+    );
+  }
+
+  const writeOffBuckets = getPositive1400WriteOffBuckets(resolvedSummary);
+  if (!writeOffBuckets.length) {
+    return { memberId: resolvedMemberId, posted: [], skipped: true, reason: "no outstanding 1400 balance" };
+  }
+
+  const base = ACCOUNT_SERVICE_URL.replace(/\/$/, "");
+  const url = `${base}/api/internal/members/writeoff`;
+  const headers = buildAccountInternalHeaders(tenantId);
+  const resolvedDate =
+    date instanceof Date ? date.toISOString().slice(0, 10) : String(date || "").slice(0, 10);
+  const cleanDocNoBase = safeDocNoPart(docNoBase);
+  const posted = [];
+
+  for (const item of writeOffBuckets) {
+    const docNo = `${cleanDocNoBase}-${item.bucket.toUpperCase()}`;
+    const response = await axios.post(
+      url,
+      {
+        date: resolvedDate,
+        docNo,
+        memberId: resolvedMemberId,
+        amount: item.amount,
+        periodBucket: item.bucket,
+        memo,
+      },
+      {
+        headers,
+        timeout: 30000,
+        validateStatus: (status) => status < 500,
+      }
+    );
+
+    if (response.status >= 400) {
+      const message =
+        response.data?.error?.message ||
+        response.data?.message ||
+        `Account write-off failed (${response.status})`;
+      throw new Error(message);
+    }
+
+    posted.push({
+      docNo,
+      bucket: item.bucket,
+      amount: item.amount,
+      journalId: response.data?.data?._id || null,
+    });
+  }
+
+  return {
+    memberId: resolvedMemberId,
+    posted,
+    totalAmount: posted.reduce((sum, item) => sum + item.amount, 0),
+    skipped: false,
+  };
+}
+
 function calculateFinancialDetails(payments, membershipCategory) {
   // Sort payments by date (most recent first)
   const sortedPayments = (payments || []).sort((a, b) => 
@@ -473,6 +603,8 @@ module.exports = {
   fetchProfilesByMembershipNumbers,
   fetchPaymentsByMemberIds,
   fetchMemberSummariesByMemberIds,
+  postMemberOutstandingWriteOff,
+  getPositive1400WriteOffBuckets,
   fetchReminderEligibilityBulk,
   calculateFinancialDetails,
   getMembershipFeeByCategory,

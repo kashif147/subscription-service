@@ -98,11 +98,29 @@ const SubscriptionSchema = new mongoose.Schema(
       result: { type: String, enum: Object.values(YEAREND_RESULT) }, // Result of the year-end processing
     },
     // Rejoin / Reinstate classification
+    renewalBatchId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "YearEndBatch",
+      default: null,
+      index: true,
+    },
     membershipMovement: {
       type: String,
       enum: Object.values(MEMBERSHIP_MOVEMENT),
       default: MEMBERSHIP_MOVEMENT.NEW_JOIN,
     },
+    previousSubscriptionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "subscription",
+      default: null,
+      index: true,
+    },
+    previousMembershipStatus: {
+      type: String,
+      enum: Object.values(MEMBERSHIP_STATUS),
+      default: null,
+    },
+    movementResolvedAt: { type: Date, default: null },
     // Member application/Subscription details
     membershipCategory: { type: String, allowNull: true },
     paymentType: {

@@ -3,9 +3,18 @@ const { RENEWAL_BATCH_STATUS } = require("../constants/enums");
 
 const RenewalMetricsSchema = new mongoose.Schema(
   {
+    beforeArchived: { type: Number, default: 0 },
+    beforeSuspended: { type: Number, default: 0 },
+    beforeCancelled: { type: Number, default: 0 },
+    beforeResigned: { type: Number, default: 0 },
+    beforeActive: { type: Number, default: 0 },
     toArchive: { type: Number, default: 0 },
     toSuspend: { type: Number, default: 0 },
     toRenew: { type: Number, default: 0 },
+    archivedAfter: { type: Number, default: 0 },
+    suspendedAfter: { type: Number, default: 0 },
+    renewedAfter: { type: Number, default: 0 },
+    newActiveAfter: { type: Number, default: 0 },
   },
   { _id: false }
 );

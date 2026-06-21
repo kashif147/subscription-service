@@ -40,6 +40,12 @@ async function publishReportingSnapshotForSubscription(
     correlationId: options.correlationId,
     memberId: options.memberId,
     processingDate: options.processingDate,
+    renewalBatchId: options.renewalBatchId,
+    yearEndFiscalYear: options.yearEndFiscalYear,
+    yearEndAction: options.yearEndAction,
+    previousMembershipStatus: options.previousMembershipStatus,
+    newMembershipStatus: options.newMembershipStatus,
+    snapshotAsOfDate: options.snapshotAsOfDate,
   });
 }
 

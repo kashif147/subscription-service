@@ -11,7 +11,15 @@ const {
   YEAREND_RESULT,
 } = require("../constants/enums");
 const { AppError } = require("../errors/AppError");
-const { fetchProfilesByIds } = require("../helpers/serviceClient");
+const {
+  createInternalWorkerReq,
+  fetchMemberSummariesByMemberIds,
+  fetchProfilesByIds,
+  postMemberOutstandingWriteOff,
+} = require("../helpers/serviceClient");
+const {
+  publishReportingSnapshotForSubscription,
+} = require("../helpers/reportingSnapshotPublish");
 const { publishSubscriptionCurrentUpdated } = require("../rabbitMQ/publishers/subscription.current.updated.publisher.js");
 const bizLogger = require("../config/bizLogger.js");
 const { emitRenewalBatchEvent } = require("../lib/renewalBatch.sse.js");
@@ -27,6 +35,19 @@ function subscriptionBaseFilter(tenantId, fiscalYear) {
     subscriptionYear: fiscalYear,
     deleted: false,
   };
+}
+
+function currentClosedFiscalYear() {
+  return new Date().getFullYear() - 1;
+}
+
+function assertProcessableFiscalYear(fiscalYear) {
+  const maxFiscalYear = currentClosedFiscalYear();
+  if (fiscalYear > maxFiscalYear) {
+    throw AppError.badRequest(
+      `Year-end renewal can only be run up to fiscal year ${maxFiscalYear}`
+    );
+  }
 }
 
 function startOfYearUtcNoon(year) {
@@ -66,6 +87,22 @@ async function assertNoConcurrentRenewalBatch(tenantId) {
   }
 }
 
+async function assertYearHasNotCompleted(tenantId, fiscalYear, excludeBatchId = null) {
+  const query = {
+    tenantId,
+    fiscalYear,
+    status: RENEWAL_BATCH_STATUS.COMPLETED,
+  };
+  if (excludeBatchId) query._id = { $ne: excludeBatchId };
+
+  const completed = await YearEndBatch.findOne(query).select("_id").lean();
+  if (completed) {
+    throw AppError.conflict(
+      `Year-end renewal has already been completed for fiscal year ${fiscalYear}`
+    );
+  }
+}
+
 function emitBatch(batchId, extra = {}) {
   emitRenewalBatchEvent(batchId, extra);
 }
@@ -85,6 +122,122 @@ async function buildMembershipMap(profileIds, tenantId, req) {
   return map;
 }
 
+async function buildBalanceSnapshotMap(memberIds, tenantId) {
+  const map = new Map();
+  const uniqueIds = [...new Set((memberIds || []).map((id) => String(id || "").trim()).filter(Boolean))];
+  if (!uniqueIds.length) return map;
+
+  try {
+    const req = createInternalWorkerReq(tenantId);
+    const summaries = await fetchMemberSummariesByMemberIds(uniqueIds, tenantId, req);
+    for (const row of summaries || []) {
+      if (!row?.memberId) continue;
+      map.set(String(row.memberId), {
+        capturedAt: new Date(),
+        source: "account-service.summary-batch",
+        summary: row.summary || null,
+      });
+    }
+  } catch (err) {
+    console.warn("[renewalBatch] balance snapshot fetch failed", err.message);
+  }
+
+  return map;
+}
+
+async function persistYearEndBalanceSnapshots(rows, snapshotMap, fallbackDate) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) return;
+
+  const ops = list.map((row) => ({
+    updateOne: {
+      filter: { _id: row._id },
+      update: {
+        $set: {
+          balanceSnapshot:
+            snapshotMap.get(String(row.memberId)) || {
+              capturedAt: fallbackDate,
+              source: "account-service.summary-batch",
+              summary: null,
+            },
+        },
+      },
+    },
+  }));
+
+  await YearEndBatchMember.bulkWrite(ops, { ordered: false });
+}
+
+async function writeOffArchivedMemberBalances({
+  rows,
+  snapshotMap,
+  tenantId,
+  fiscalYear,
+  batchId,
+  date,
+}) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) return;
+
+  const req = createInternalWorkerReq(tenantId);
+  for (const row of list) {
+    const snapshot = snapshotMap.get(String(row.memberId)) || null;
+    const summary = snapshot?.summary || null;
+    const writeOff = await postMemberOutstandingWriteOff({
+      memberId: row.memberId,
+      tenantId,
+      req,
+      date,
+      docNoBase: `WO-YE-${fiscalYear}-ARCHIVE-${row.memberId}`,
+      memo: `Year-end ${fiscalYear} suspended-to-archived write-off; renewalBatchId ${batchId}`,
+      summary,
+      requireSummary: true,
+    });
+
+    await YearEndBatchMember.updateOne(
+      { _id: row._id },
+      {
+        $set: {
+          writeOff: {
+            ...writeOff,
+            postedAt: new Date(),
+            source: "year-end-archive",
+          },
+        },
+      }
+    );
+  }
+}
+
+function afterStatusForAction(action, beforeStatus) {
+  if (action === RENEWAL_BATCH_MEMBER_ACTION.ARCHIVE) {
+    return MEMBERSHIP_STATUS.ARCHIVED;
+  }
+  if (action === RENEWAL_BATCH_MEMBER_ACTION.SUSPEND) {
+    return MEMBERSHIP_STATUS.SUSPENDED;
+  }
+  if (action === RENEWAL_BATCH_MEMBER_ACTION.RENEW) {
+    return MEMBERSHIP_STATUS.RENEWED;
+  }
+  return beforeStatus || null;
+}
+
+async function publishYearEndReportingSnapshot(subscriptionDoc, row, ctx) {
+  if (!subscriptionDoc) return;
+  await publishReportingSnapshotForSubscription(subscriptionDoc, {
+    tenantId: subscriptionDoc.tenantId || ctx.tenantId,
+    memberId: row?.memberId,
+    processingDate: ctx.processingDate,
+    renewalBatchId: ctx.renewalBatchId,
+    yearEndFiscalYear: ctx.yearEndFiscalYear,
+    yearEndAction: ctx.yearEndAction,
+    previousMembershipStatus:
+      row?.beforeStatus || subscriptionDoc.previousMembershipStatus,
+    newMembershipStatus: ctx.newMembershipStatus,
+    snapshotAsOfDate: ctx.snapshotAsOfDate,
+  });
+}
+
 /**
  * @param {string} batchId
  */
@@ -96,7 +249,38 @@ async function runPreviewJob(batchId) {
     const { tenantId, fiscalYear } = batch;
     const base = subscriptionBaseFilter(tenantId, fiscalYear);
 
-    const [toArchive, toSuspend, toRenew] = await Promise.all([
+    const [
+      beforeArchived,
+      beforeSuspended,
+      beforeCancelled,
+      beforeResigned,
+      beforeActive,
+      toArchive,
+      toSuspend,
+      toRenew,
+    ] = await Promise.all([
+      Subscription.countDocuments({
+        tenantId,
+        subscriptionYear: fiscalYear,
+        deleted: false,
+        subscriptionStatus: MEMBERSHIP_STATUS.ARCHIVED,
+      }),
+      Subscription.countDocuments({
+        ...base,
+        subscriptionStatus: MEMBERSHIP_STATUS.SUSPENDED,
+      }),
+      Subscription.countDocuments({
+        ...base,
+        subscriptionStatus: MEMBERSHIP_STATUS.CANCELLED,
+      }),
+      Subscription.countDocuments({
+        ...base,
+        subscriptionStatus: MEMBERSHIP_STATUS.RESIGNED,
+      }),
+      Subscription.countDocuments({
+        ...base,
+        subscriptionStatus: MEMBERSHIP_STATUS.ACTIVE,
+      }),
       Subscription.countDocuments({
         ...base,
         subscriptionStatus: MEMBERSHIP_STATUS.SUSPENDED,
@@ -147,6 +331,7 @@ async function runPreviewJob(batchId) {
     function pushRows(subs, action) {
       for (const s of subs) {
         const pid = s.profileId.toString();
+        const beforeStatus = s.subscriptionStatus || null;
         memberDocs.push({
           tenantId,
           batchId: batch._id,
@@ -154,6 +339,8 @@ async function runPreviewJob(batchId) {
           profileId: s.profileId,
           subscriptionId: s._id,
           memberId: membershipMap.get(pid) || pid,
+          beforeStatus,
+          afterStatus: afterStatusForAction(action, beforeStatus),
         });
       }
     }
@@ -166,7 +353,20 @@ async function runPreviewJob(batchId) {
       await YearEndBatchMember.insertMany(memberDocs, { ordered: false });
     }
 
-    batch.metrics = { toArchive, toSuspend, toRenew };
+    batch.metrics = {
+      beforeArchived,
+      beforeSuspended,
+      beforeCancelled,
+      beforeResigned,
+      beforeActive,
+      toArchive,
+      toSuspend,
+      toRenew,
+      archivedAfter: beforeArchived + toArchive,
+      suspendedAfter: toSuspend,
+      renewedAfter: toRenew,
+      newActiveAfter: toRenew,
+    };
     batch.status = RENEWAL_BATCH_STATUS.READY;
     batch.previewCompletedAt = new Date();
     batch.error = null;
@@ -204,6 +404,28 @@ async function createRenewalBatch(req, body) {
   if (!Number.isFinite(fy) || fy < 1900 || fy > 3000) {
     throw AppError.badRequest("fiscalYear must be a valid year");
   }
+  assertProcessableFiscalYear(fy);
+  await assertYearHasNotCompleted(req.tenantId, fy);
+
+  const openBatch = await YearEndBatch.findOne({
+    tenantId: req.tenantId,
+    fiscalYear: fy,
+    status: {
+      $in: [
+        RENEWAL_BATCH_STATUS.DRAFT,
+        RENEWAL_BATCH_STATUS.READY,
+        RENEWAL_BATCH_STATUS.QUEUED,
+        RENEWAL_BATCH_STATUS.INPROGRESS,
+      ],
+    },
+  })
+    .select("_id status fiscalYear")
+    .lean();
+  if (openBatch) {
+    throw AppError.conflict(
+      `A ${openBatch.status} year-end renewal batch already exists for fiscal year ${fy}`
+    );
+  }
 
   const createdBy = await resolveCrmUserObjectId(req);
   const doc = await YearEndBatch.create({
@@ -211,7 +433,20 @@ async function createRenewalBatch(req, body) {
     name: String(name).trim(),
     fiscalYear: fy,
     status: RENEWAL_BATCH_STATUS.DRAFT,
-    metrics: { toArchive: 0, toSuspend: 0, toRenew: 0 },
+    metrics: {
+      beforeArchived: 0,
+      beforeSuspended: 0,
+      beforeCancelled: 0,
+      beforeResigned: 0,
+      beforeActive: 0,
+      toArchive: 0,
+      toSuspend: 0,
+      toRenew: 0,
+      archivedAfter: 0,
+      suspendedAfter: 0,
+      renewedAfter: 0,
+      newActiveAfter: 0,
+    },
     runBy: createdBy,
     createdBy,
     updatedBy: createdBy,
@@ -226,16 +461,9 @@ async function createRenewalBatch(req, body) {
   return doc.toObject();
 }
 
-async function getRenewalBatchById(req, batchId) {
-  if (!mongoose.Types.ObjectId.isValid(batchId)) {
-    throw AppError.badRequest("Invalid batch id");
-  }
-  const batch = await YearEndBatch.findOne({
-    _id: batchId,
-    tenantId: req.tenantId,
-  }).lean();
-  if (!batch) throw AppError.notFound("Renewal batch not found");
-
+async function getBatchWithMembers(req, batch) {
+  if (!batch) return null;
+  const batchId = batch._id;
   const members = await YearEndBatchMember.find({
     batchId,
     tenantId: req.tenantId,
@@ -259,12 +487,110 @@ async function getRenewalBatchById(req, batchId) {
   };
 }
 
+async function getRenewalBatchById(req, batchId) {
+  if (!mongoose.Types.ObjectId.isValid(batchId)) {
+    throw AppError.badRequest("Invalid batch id");
+  }
+  const batch = await YearEndBatch.findOne({
+    _id: batchId,
+    tenantId: req.tenantId,
+  }).lean();
+  if (!batch) throw AppError.notFound("Renewal batch not found");
+
+  return getBatchWithMembers(req, batch);
+}
+
+async function getLatestRenewalBatchByYear(req, fiscalYear) {
+  const fy = parseInt(fiscalYear, 10);
+  if (!Number.isFinite(fy)) throw AppError.badRequest("fiscalYear must be a valid year");
+  const batch = await YearEndBatch.findOne({
+    tenantId: req.tenantId,
+    fiscalYear: fy,
+  })
+    .sort({ createdAt: -1, _id: -1 })
+    .lean();
+  return getBatchWithMembers(req, batch);
+}
+
+async function listRenewalYearOptions(req) {
+  const maxFiscalYear = currentClosedFiscalYear();
+  const [subscriptionYearsRaw, batchYearsRaw] = await Promise.all([
+    Subscription.distinct("subscriptionYear", {
+      tenantId: req.tenantId,
+      deleted: false,
+      subscriptionYear: { $lte: maxFiscalYear },
+    }),
+    YearEndBatch.distinct("fiscalYear", {
+      tenantId: req.tenantId,
+      fiscalYear: { $lte: maxFiscalYear },
+    }),
+  ]);
+
+  const years = new Set([maxFiscalYear]);
+  for (const raw of [...subscriptionYearsRaw, ...batchYearsRaw]) {
+    const year = parseInt(raw, 10);
+    if (Number.isFinite(year) && year <= maxFiscalYear) years.add(year);
+  }
+
+  const sortedYears = [...years].sort((a, b) => b - a);
+  const batches = await YearEndBatch.find({
+    tenantId: req.tenantId,
+    fiscalYear: { $in: sortedYears },
+  })
+    .sort({ fiscalYear: -1, createdAt: -1, _id: -1 })
+    .lean();
+
+  const latestByYear = new Map();
+  const completedYears = new Set();
+  for (const batch of batches) {
+    if (!latestByYear.has(batch.fiscalYear)) {
+      latestByYear.set(batch.fiscalYear, batch);
+    }
+    if (batch.status === RENEWAL_BATCH_STATUS.COMPLETED) {
+      completedYears.add(batch.fiscalYear);
+    }
+  }
+
+  return {
+    defaultFiscalYear: maxFiscalYear,
+    maxFiscalYear,
+    years: sortedYears.map((fiscalYear) => {
+      const latestBatch = latestByYear.get(fiscalYear) || null;
+      const hasCompleted = completedYears.has(fiscalYear);
+      return {
+        fiscalYear,
+        status: latestBatch?.status || "NOT_STARTED",
+        batchId: latestBatch?._id || null,
+        hasCompleted,
+        isReadOnly: hasCompleted,
+        canCreatePreview:
+          !hasCompleted &&
+          ![
+            RENEWAL_BATCH_STATUS.DRAFT,
+            RENEWAL_BATCH_STATUS.READY,
+            RENEWAL_BATCH_STATUS.QUEUED,
+            RENEWAL_BATCH_STATUS.INPROGRESS,
+          ].includes(latestBatch?.status),
+        canExecute: !hasCompleted && latestBatch?.status === RENEWAL_BATCH_STATUS.READY,
+      };
+    }),
+  };
+}
+
 async function requestExecuteRenewalBatch(req, batchId) {
   if (!mongoose.Types.ObjectId.isValid(batchId)) {
     throw AppError.badRequest("Invalid batch id");
   }
 
   await assertNoConcurrentRenewalBatch(req.tenantId);
+
+  const existing = await YearEndBatch.findOne({
+    _id: batchId,
+    tenantId: req.tenantId,
+  }).lean();
+  if (!existing) throw AppError.notFound("Renewal batch not found");
+  assertProcessableFiscalYear(existing.fiscalYear);
+  await assertYearHasNotCompleted(req.tenantId, existing.fiscalYear, existing._id);
 
   const updatedBy = await resolveCrmUserObjectId(req);
   const updated = await YearEndBatch.findOneAndUpdate(
@@ -375,6 +701,7 @@ async function processRenewalBatchExecute(batchId) {
   const batch = claimed;
   const executedAt = new Date();
   const processingDateISO = executedAt.toISOString().split("T")[0];
+  const snapshotAsOfDate = dayAfterEndUtc(batch.fiscalYear);
 
   emitBatch(batchId, { status: RENEWAL_BATCH_STATUS.INPROGRESS, step: "started" });
 
@@ -383,26 +710,89 @@ async function processRenewalBatchExecute(batchId) {
       batchId,
       action: RENEWAL_BATCH_MEMBER_ACTION.ARCHIVE,
     })
-      .select("subscriptionId")
+      .select("_id subscriptionId memberId beforeStatus afterStatus")
       .lean();
+    const archiveBalanceSnapshotMap = await buildBalanceSnapshotMap(
+      archiveRows.map((row) => row.memberId),
+      batch.tenantId
+    );
+    await persistYearEndBalanceSnapshots(
+      archiveRows,
+      archiveBalanceSnapshotMap,
+      executedAt
+    );
+    await writeOffArchivedMemberBalances({
+      rows: archiveRows,
+      snapshotMap: archiveBalanceSnapshotMap,
+      tenantId: batch.tenantId,
+      fiscalYear: batch.fiscalYear,
+      batchId: batch._id,
+      date: processingDateISO,
+    });
     const archiveIds = archiveRows.map((r) => r.subscriptionId);
     await bulkUpdateSubscriptionChunk(archiveIds, {
       subscriptionStatus: MEMBERSHIP_STATUS.ARCHIVED,
       isCurrent: false,
+      renewalBatchId: batch._id,
+      yearend: {
+        processed: true,
+        processedAt: executedAt,
+        result: YEAREND_RESULT.ARCHIVED,
+      },
     });
+    const archivedSubs = await Subscription.find({ _id: { $in: archiveIds } }).lean();
+    const archivedMap = new Map(archivedSubs.map((s) => [String(s._id), s]));
+    for (const row of archiveRows) {
+      await publishYearEndReportingSnapshot(
+        archivedMap.get(String(row.subscriptionId)),
+        row,
+        {
+          tenantId: batch.tenantId,
+          processingDate: processingDateISO,
+          renewalBatchId: batch._id,
+          yearEndFiscalYear: batch.fiscalYear,
+          yearEndAction: row.action,
+          newMembershipStatus: MEMBERSHIP_STATUS.ARCHIVED,
+          snapshotAsOfDate,
+        }
+      );
+    }
     emitBatch(batchId, { status: RENEWAL_BATCH_STATUS.INPROGRESS, step: "archive_done" });
 
     const suspendRows = await YearEndBatchMember.find({
       batchId,
       action: RENEWAL_BATCH_MEMBER_ACTION.SUSPEND,
     })
-      .select("subscriptionId")
+      .select("subscriptionId memberId beforeStatus afterStatus")
       .lean();
     const suspendIds = suspendRows.map((r) => r.subscriptionId);
     await bulkUpdateSubscriptionChunk(suspendIds, {
       subscriptionStatus: MEMBERSHIP_STATUS.SUSPENDED,
       isCurrent: false,
+      renewalBatchId: batch._id,
+      yearend: {
+        processed: true,
+        processedAt: executedAt,
+        result: YEAREND_RESULT.SUSPENDED,
+      },
     });
+    const suspendedSubs = await Subscription.find({ _id: { $in: suspendIds } }).lean();
+    const suspendedMap = new Map(suspendedSubs.map((s) => [String(s._id), s]));
+    for (const row of suspendRows) {
+      await publishYearEndReportingSnapshot(
+        suspendedMap.get(String(row.subscriptionId)),
+        row,
+        {
+          tenantId: batch.tenantId,
+          processingDate: processingDateISO,
+          renewalBatchId: batch._id,
+          yearEndFiscalYear: batch.fiscalYear,
+          yearEndAction: row.action,
+          newMembershipStatus: MEMBERSHIP_STATUS.SUSPENDED,
+          snapshotAsOfDate,
+        }
+      );
+    }
     emitBatch(batchId, { status: RENEWAL_BATCH_STATUS.INPROGRESS, step: "suspend_done" });
 
     const renewRows = await YearEndBatchMember.find({
@@ -433,6 +823,7 @@ async function processRenewalBatchExecute(batchId) {
           $set: {
             isCurrent: false,
             subscriptionStatus: MEMBERSHIP_STATUS.RENEWED,
+            renewalBatchId: batch._id,
             yearend: {
               processed: true,
               processedAt: executedAt,
@@ -441,6 +832,16 @@ async function processRenewalBatchExecute(batchId) {
           },
         }
       );
+      const renewedOldSub = await Subscription.findById(oldSub._id).lean();
+      await publishYearEndReportingSnapshot(renewedOldSub, row, {
+        tenantId: batch.tenantId,
+        processingDate: processingDateISO,
+        renewalBatchId: batch._id,
+        yearEndFiscalYear: batch.fiscalYear,
+        yearEndAction: RENEWAL_BATCH_MEMBER_ACTION.RENEW,
+        newMembershipStatus: MEMBERSHIP_STATUS.RENEWED,
+        snapshotAsOfDate,
+      });
 
       const newSub = await Subscription.create({
         tenantId: oldSub.tenantId,
@@ -466,6 +867,10 @@ async function processRenewalBatchExecute(batchId) {
           clearedReason: null,
         },
         membershipMovement: MEMBERSHIP_MOVEMENT.RENEWED,
+        previousSubscriptionId: oldSub._id,
+        previousMembershipStatus: oldSub.subscriptionStatus,
+        movementResolvedAt: executedAt,
+        renewalBatchId: batch._id,
         membershipCategory: oldSub.membershipCategory,
         paymentType: oldSub.paymentType,
         payrollNo: oldSub.payrollNo,
@@ -482,6 +887,45 @@ async function processRenewalBatchExecute(batchId) {
         processingDate: processingDateISO,
         renewalBatchId: batch._id,
       });
+      await publishYearEndReportingSnapshot(newSub, row, {
+        tenantId: batch.tenantId,
+        processingDate: processingDateISO,
+        renewalBatchId: batch._id,
+        yearEndFiscalYear: batch.fiscalYear,
+        yearEndAction: RENEWAL_BATCH_MEMBER_ACTION.RENEW,
+        newMembershipStatus: MEMBERSHIP_STATUS.ACTIVE,
+        snapshotAsOfDate,
+      });
+    }
+
+    const processedRows = await YearEndBatchMember.find({
+      batchId,
+      balanceSnapshot: null,
+    })
+      .select("_id memberId")
+      .lean();
+    const balanceSnapshotMap = await buildBalanceSnapshotMap(
+      processedRows.map((row) => row.memberId),
+      batch.tenantId
+    );
+    if (processedRows.length) {
+      const ops = processedRows.map((row) => ({
+        updateOne: {
+          filter: { _id: row._id },
+          update: {
+            $set: {
+              processedAt: executedAt,
+              balanceSnapshot:
+                balanceSnapshotMap.get(String(row.memberId)) || {
+                  capturedAt: executedAt,
+                  source: "account-service.summary-batch",
+                  summary: null,
+                },
+            },
+          },
+        },
+      }));
+      await YearEndBatchMember.bulkWrite(ops, { ordered: false });
     }
 
     emitBatch(batchId, { status: RENEWAL_BATCH_STATUS.INPROGRESS, step: "renew_done" });
@@ -525,6 +969,8 @@ async function processRenewalBatchExecute(batchId) {
 module.exports = {
   createRenewalBatch,
   getRenewalBatchById,
+  getLatestRenewalBatchByYear,
+  listRenewalYearOptions,
   requestExecuteRenewalBatch,
   processRenewalBatchExecute,
   runPreviewJob,

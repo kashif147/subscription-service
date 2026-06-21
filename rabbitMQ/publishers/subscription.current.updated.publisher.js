@@ -92,6 +92,24 @@ async function publishSubscriptionCurrentUpdated(subscriptionDoc, ctx = {}) {
     },
     subscriptionAttributes,
   };
+  if (subscriptionDoc.membershipMovement || ctx.membershipMovement) {
+    eventPayload.membershipMovement =
+      ctx.membershipMovement || subscriptionDoc.membershipMovement;
+  }
+  if (subscriptionDoc.previousSubscriptionId || ctx.previousSubscriptionId) {
+    eventPayload.previousSubscriptionId = String(
+      ctx.previousSubscriptionId || subscriptionDoc.previousSubscriptionId
+    );
+  }
+  if (subscriptionDoc.previousMembershipStatus || ctx.previousMembershipStatus) {
+    eventPayload.previousMembershipStatus =
+      ctx.previousMembershipStatus || subscriptionDoc.previousMembershipStatus;
+  }
+  if (subscriptionDoc.movementResolvedAt || ctx.movementResolvedAt) {
+    const movementDate = ctx.movementResolvedAt || subscriptionDoc.movementResolvedAt;
+    eventPayload.movementResolvedAt =
+      movementDate instanceof Date ? movementDate.toISOString() : String(movementDate);
+  }
   if (ctx.renewalBatchId != null && ctx.renewalBatchId !== "") {
     eventPayload.renewalBatchId =
       typeof ctx.renewalBatchId.toString === "function"

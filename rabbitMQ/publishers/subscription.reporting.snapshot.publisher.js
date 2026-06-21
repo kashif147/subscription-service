@@ -57,6 +57,23 @@ function buildReportingSnapshotPayload(subscriptionDoc, profileLean, ctx = {}) {
     paymentFrequency: sub.paymentFrequency || null,
     subscriptionYear: sub.subscriptionYear ?? null,
     isCurrent: sub.isCurrent === true,
+    previousSubscriptionId: sub.previousSubscriptionId
+      ? String(sub.previousSubscriptionId)
+      : ctx.previousSubscriptionId
+        ? String(ctx.previousSubscriptionId)
+        : null,
+    previousMembershipStatus:
+      sub.previousMembershipStatus || ctx.previousMembershipStatus || null,
+    movementResolvedAt: toIsoDate(sub.movementResolvedAt || ctx.movementResolvedAt),
+    renewalBatchId: ctx.renewalBatchId
+      ? String(ctx.renewalBatchId)
+      : sub.renewalBatchId
+        ? String(sub.renewalBatchId)
+        : null,
+    yearEndFiscalYear: ctx.yearEndFiscalYear ?? null,
+    yearEndAction: ctx.yearEndAction || null,
+    newMembershipStatus: ctx.newMembershipStatus || sub.subscriptionStatus || null,
+    snapshotAsOfDate: toIsoDate(ctx.snapshotAsOfDate),
   };
 }
 

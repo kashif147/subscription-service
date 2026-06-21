@@ -9,6 +9,8 @@ const {
 const {
   fetchProfilesByIds,
   createInternalWorkerReq,
+  fetchMemberSummariesByMemberIds,
+  postMemberOutstandingWriteOff,
 } = require("../../helpers/serviceClient");
 const Subscription = require("../../models/subscription.model");
 const mongoose = require("mongoose");
@@ -21,6 +23,10 @@ const {
 const {
   resolveNoFeePaymentFields,
 } = require("../../helpers/noFeeMembershipPayment.helper.js");
+const {
+  resolveMembershipMovement,
+  isValidMembershipMovement,
+} = require("../../helpers/membershipMovementResolver.js");
 
 /**
  * Membership lines that are not active — merge/approval onto an existing profile
@@ -75,6 +81,56 @@ function subscriptionPeriodStillOpen(endDate) {
   if (Number.isNaN(endMs)) return true;
   const todayStart = utcStartOfDayMs(new Date());
   return todayStart != null && endMs >= todayStart;
+}
+
+async function writeOffSuspendedReinstatementBalance({
+  memberId,
+  tenantId,
+  applicationId,
+  profileId,
+  previousSubscriptionId,
+  processingDate,
+}) {
+  const resolvedMemberId = String(memberId || "").trim();
+  if (!resolvedMemberId) {
+    console.warn(
+      "[SUBSCRIPTION_UPSERT_LISTENER] Skipping suspended reinstatement write-off: missing memberId",
+      { profileId, applicationId }
+    );
+    return null;
+  }
+
+  const req = createInternalWorkerReq(tenantId);
+  const summaries = await fetchMemberSummariesByMemberIds(
+    [resolvedMemberId],
+    tenantId,
+    req
+  );
+  const summary = summaries?.[0]?.summary || null;
+  const date =
+    processingDate ||
+    new Date().toISOString().slice(0, 10);
+  const writeOff = await postMemberOutstandingWriteOff({
+    memberId: resolvedMemberId,
+    tenantId,
+    req,
+    date,
+    docNoBase: `WO-REINSTATE-SUSP-${resolvedMemberId}-${applicationId || previousSubscriptionId || profileId}`,
+    memo: `Reinstate - Suspended write-off; applicationId ${applicationId || "n/a"}; previousSubscriptionId ${previousSubscriptionId || "n/a"}`,
+    summary,
+    requireSummary: true,
+  });
+
+  console.log(
+    "[SUBSCRIPTION_UPSERT_LISTENER] Suspended reinstatement write-off processed",
+    {
+      memberId: resolvedMemberId,
+      skipped: writeOff.skipped,
+      totalAmount: writeOff.totalAmount || 0,
+      posted: writeOff.posted?.length || 0,
+    }
+  );
+  return writeOff;
 }
 
 function parseDateOnlyAsUtcNoon(value) {
@@ -284,6 +340,10 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       userEmail = null,
       isCurrent: payloadIsCurrent = undefined,
       deactivatePreviousSubscriptionStatus = null,
+      membershipMovement: payloadMembershipMovement = null,
+      previousSubscriptionId: payloadPreviousSubscriptionId = null,
+      previousMembershipStatus: payloadPreviousMembershipStatus = null,
+      movementResolvedAt: payloadMovementResolvedAt = null,
     } = data || {};
 
     const resolvedPayment = resolveNoFeePaymentFields({
@@ -363,23 +423,6 @@ async function handleSubscriptionUpsertRequested(payload, context) {
         startDate: -1,
       })
       .lean();
-    let membershipMovement = MEMBERSHIP_MOVEMENT.NEW_JOIN;
-    if (existingSubs.length > 0) {
-      const hasCurrentYear = existingSubs.some(
-        (s) =>
-          s.startDate &&
-          new Date(s.startDate).getUTCFullYear() === subscriptionYear
-      );
-      if (hasCurrentYear) {
-        membershipMovement = MEMBERSHIP_MOVEMENT.REJOIN;
-      } else {
-        membershipMovement = MEMBERSHIP_MOVEMENT.REINSTATE;
-      }
-    }
-
-    // Demote every current row for this profile (do not filter by tenantId).
-    // Legacy rows may have tenantId null/mismatched; scoping tenant here left multiple isCurrent=true.
-
     // Idempotent payment-only path: same profile + same applicationId as an existing **live** row
     // (isCurrent + Active or Renewed). Resigned/cancelled/suspended/archived/lapsed rows stay as history;
     // approval creates a new subscription for returning members.
@@ -394,6 +437,20 @@ async function handleSubscriptionUpsertRequested(payload, context) {
     );
     const profileHasLiveMembership =
       isLiveCurrentSubscription(profileCurrentSub);
+    const previousSubForMovement = profileCurrentSub || existingSubs[0] || null;
+    const resolvedMovement = resolveMembershipMovement(previousSubForMovement);
+    const membershipMovement = isValidMembershipMovement(payloadMembershipMovement)
+      ? payloadMembershipMovement
+      : resolvedMovement.membershipMovement;
+    const previousSubscriptionId =
+      payloadPreviousSubscriptionId || resolvedMovement.previousSubscriptionId || null;
+    const previousMembershipStatus =
+      payloadPreviousMembershipStatus ||
+      resolvedMovement.previousMembershipStatus ||
+      null;
+    const movementResolvedAt = payloadMovementResolvedAt
+      ? new Date(payloadMovementResolvedAt)
+      : new Date();
 
     if (normalizedAppId) {
       const existingForApp = await findLiveSubscriptionForApplication(
@@ -503,6 +560,64 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       }
     }
 
+    if (profileHasLiveMembership && profileCurrentSub) {
+      console.log(
+        "ℹ️ [SUBSCRIPTION_UPSERT_LISTENER] Profile already has a live current subscription — updating existing row only:",
+        {
+          subscriptionId: profileCurrentSub._id,
+          applicationId: normalizedAppId,
+          subscriptionStatus: profileCurrentSub.subscriptionStatus,
+        }
+      );
+      const update = {};
+      if (
+        effectivePaymentType != null &&
+        Object.values(PAYMENT_TYPE).includes(effectivePaymentType)
+      ) {
+        update.paymentType = effectivePaymentType;
+      }
+      if (
+        effectivePaymentFrequency != null &&
+        Object.values(PAYMENT_FREQUENCY).includes(effectivePaymentFrequency)
+      ) {
+        update.paymentFrequency = effectivePaymentFrequency;
+      }
+      if (payrollNo != null) {
+        update.payrollNo = payrollNo;
+      }
+      if (membershipCategory != null && membershipCategory !== "") {
+        update.membershipCategory = membershipCategory;
+      }
+      if (resolvedUserId) {
+        update.userId = resolvedUserId;
+      }
+      if (Object.keys(update).length > 0) {
+        await Subscription.updateOne({ _id: profileCurrentSub._id }, { $set: update });
+      }
+      const subForEvent =
+        (await Subscription.findById(profileCurrentSub._id).lean()) ||
+        profileCurrentSub;
+      try {
+        const profileLean = await fetchProfileWithRetry(
+          [profileIdObjectId],
+          tenantId,
+          createInternalWorkerReq(tenantId)
+        );
+        await publishReportingSnapshotForSubscription(subForEvent, {
+          tenantId,
+          correlationId: payload?.correlationId,
+          memberId,
+          profileLean,
+        });
+      } catch (snapErr) {
+        console.warn(
+          "[SUBSCRIPTION_UPSERT_LISTENER] reporting snapshot for live update failed:",
+          snapErr.message
+        );
+      }
+      return;
+    }
+
     let shouldBeCurrent = true;
     if (payloadIsCurrent === false || payloadIsCurrent === "false") {
       shouldBeCurrent = false;
@@ -514,14 +629,9 @@ async function handleSubscriptionUpsertRequested(payload, context) {
     }
 
     if (shouldBeCurrent) {
-      const demotedStatus =
-        deactivatePreviousSubscriptionStatus &&
-        Object.values(MEMBERSHIP_STATUS).includes(
-          deactivatePreviousSubscriptionStatus,
-        )
-          ? deactivatePreviousSubscriptionStatus
-          : MEMBERSHIP_STATUS.CANCELLED;
-
+      // Preserve the previous row's business status (Cancelled, Resigned,
+      // Suspended, Archived, etc.). Application processing only changes which
+      // row is current; it must not rewrite the member's historical reason.
       await Subscription.updateMany(
         {
           profileId: profileIdObjectId,
@@ -531,10 +641,20 @@ async function handleSubscriptionUpsertRequested(payload, context) {
         {
           $set: {
             isCurrent: false,
-            subscriptionStatus: demotedStatus,
           },
         }
       );
+    }
+
+    if (membershipMovement === MEMBERSHIP_MOVEMENT.REINSTATE_SUSPENDED) {
+      await writeOffSuspendedReinstatementBalance({
+        memberId,
+        tenantId,
+        applicationId: normalizedAppId || applicationId,
+        profileId: profileIdObjectId.toString(),
+        previousSubscriptionId,
+        processingDate,
+      });
     }
 
     // Create new subscription
@@ -549,6 +669,9 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       endDate,
       rolloverDate,
       membershipMovement,
+      previousSubscriptionId,
+      previousMembershipStatus,
+      movementResolvedAt,
     };
 
     // Only include optional fields if they have valid values

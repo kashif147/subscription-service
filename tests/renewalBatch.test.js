@@ -5,6 +5,9 @@ const {
   RENEWAL_BATCH_MEMBER_ACTION,
 } = require("../constants/enums");
 const { AppError } = require("../errors/AppError");
+const {
+  getPositive1400WriteOffBuckets,
+} = require("../helpers/serviceClient");
 
 describe("RENEWAL_BATCH_STATUS", () => {
   it("exports distinct lifecycle values", () => {
@@ -36,5 +39,32 @@ describe("AppError", () => {
     const e = AppError.serviceUnavailable("down");
     assert.equal(e.status, 503);
     assert.equal(e.code, "SERVICE_UNAVAILABLE");
+  });
+});
+
+describe("getPositive1400WriteOffBuckets", () => {
+  it("uses positive 1400 arrears and current bucket balances", () => {
+    const buckets = getPositive1400WriteOffBuckets({
+      buckets: [
+        { accountCode: "1400", bucket: "arrears", amount: 12000 },
+        { accountCode: "1400", bucket: "current", amount: 3000 },
+        { accountCode: "2020", bucket: "advance", amount: -5000 },
+        { accountCode: "1400", bucket: "advance", amount: 9000 },
+      ],
+    });
+
+    assert.deepEqual(buckets, [
+      { bucket: "arrears", amount: 12000 },
+      { bucket: "current", amount: 3000 },
+    ]);
+  });
+
+  it("falls back to positive 1400 account net when bucket rows are unavailable", () => {
+    const buckets = getPositive1400WriteOffBuckets({
+      accounts: [{ accountCode: "1400", amount: 2500 }],
+      outstandingBalance: 1000,
+    });
+
+    assert.deepEqual(buckets, [{ bucket: "arrears", amount: 2500 }]);
   });
 });

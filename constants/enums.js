@@ -71,7 +71,11 @@ exports.YEAREND_RESULT = {
 exports.MEMBERSHIP_MOVEMENT = {
   NEW_JOIN: "NewJoin",
   REJOIN: "Rejoin",
+  REJOIN_CANCELLED: "Rejoin - Cancelled",
+  REJOIN_RESIGNED: "Rejoin - Resigned",
   REINSTATE: "Reinstate",
+  REINSTATE_SUSPENDED: "Reinstate - Suspended",
+  REINSTATE_ARCHIVED: "Reinstate - Archived",
   RENEWED: "Renewed",
 };
 
