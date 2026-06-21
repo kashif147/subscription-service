@@ -7,7 +7,13 @@
  *   node scripts/publish-reporting-snapshots.js --tenant-id=<tenant> --member-id=12345
  *   node scripts/publish-reporting-snapshots.js --tenant-id=<tenant> --profile-id=<id> --dry-run
  */
-require("dotenv").config();
+try {
+  require("dotenv").config();
+} catch (err) {
+  if (!err || err.code !== "MODULE_NOT_FOUND") {
+    throw err;
+  }
+}
 
 const crypto = require("crypto");
 const axios = require("axios");
