@@ -468,6 +468,25 @@ async function handleSubscriptionUpsertRequested(payload, context) {
             applicationDate,
           });
         }
+
+        try {
+          const profileLean = await fetchProfileWithRetry(
+            [profileIdObjectId],
+            tenantId,
+            createInternalWorkerReq(tenantId)
+          );
+          await publishReportingSnapshotForSubscription(subForEvent, {
+            tenantId,
+            correlationId: payload?.correlationId,
+            memberId,
+            profileLean,
+          });
+        } catch (snapErr) {
+          console.warn(
+            "[SUBSCRIPTION_UPSERT_LISTENER] reporting snapshot retry failed:",
+            snapErr.message
+          );
+        }
         return;
       }
 
