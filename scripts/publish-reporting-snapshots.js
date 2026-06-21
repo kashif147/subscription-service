@@ -10,20 +10,20 @@
 require("dotenv").config();
 
 const crypto = require("crypto");
+const axios = require("axios");
 const mongoose = require("mongoose");
 const { mongooseConnection } = require("../config/db");
 const Subscription = require("../models/subscription.model");
 const {
-  publishReportingSnapshotForSubscription,
-} = require("../helpers/reportingSnapshotPublish");
-const {
-  initEventSystem,
-  shutdownEventSystem,
-} = require("../rabbitMQ");
-const {
-  fetchProfilesByIds,
-  createInternalWorkerReq,
-} = require("../helpers/serviceClient");
+  init,
+  publisher,
+  shutdown,
+} = require("@projectShell/rabbitmq-middleware");
+
+const PROFILE_SERVICE_URL =
+  process.env.PROFILE_SERVICE_URL ||
+  "http://projectshell-vm.northeurope.cloudapp.azure.com/profile-service";
+const SNAPSHOT_EVENT = "members.subscription.reporting.snapshot.v1";
 
 function parseArgs(argv) {
   const args = {
@@ -55,19 +55,154 @@ function chunk(items, size) {
   return chunks;
 }
 
+function toIdString(value) {
+  if (value == null) return "";
+  if (value.toString && typeof value.toString === "function") {
+    return value.toString();
+  }
+  return String(value);
+}
+
+function profileMembershipNumber(profile) {
+  return profile && profile.membershipNumber != null
+    ? String(profile.membershipNumber).trim()
+    : "";
+}
+
+function randomCorrelationId() {
+  if (crypto.randomUUID && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return [
+    Date.now().toString(36),
+    Math.random().toString(36).slice(2, 10),
+    Math.random().toString(36).slice(2, 10),
+  ].join("-");
+}
+
+function toIsoDate(value) {
+  if (value == null || value === "") return null;
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString();
+}
+
+function fullNameFromProfile(profile) {
+  if (!profile) return null;
+  const pi = profile.personalInfo || profile;
+  if (pi.fullName) return String(pi.fullName).trim() || null;
+  const parts = [pi.forename, pi.surname].filter(Boolean);
+  return parts.length ? parts.join(" ").trim() : null;
+}
+
+function buildReportingSnapshotPayload(subscriptionDoc, profileLean, ctx) {
+  const sub = subscriptionDoc.toObject
+    ? subscriptionDoc.toObject({ flattenMaps: true })
+    : subscriptionDoc;
+  const prof =
+    profileLean && profileLean.professionalDetails
+      ? profileLean.professionalDetails
+      : profileLean || {};
+  const cancellation = sub.cancellation || {};
+  const resignation = sub.resignation || {};
+  const yearend = sub.yearend || {};
+  const membershipNumber =
+    ctx.memberId || profileMembershipNumber(profileLean) || null;
+
+  return {
+    tenantId: sub.tenantId || ctx.tenantId,
+    subscriptionId: String(sub._id),
+    profileId: toIdString(sub.profileId && sub.profileId._id ? sub.profileId._id : sub.profileId),
+    membershipNumber:
+      membershipNumber != null ? String(membershipNumber).trim() : null,
+    fullName: fullNameFromProfile(profileLean),
+    membershipStatus: sub.subscriptionStatus,
+    membershipMovement: sub.membershipMovement || null,
+    startDate: toIsoDate(sub.startDate),
+    expiryDate: toIsoDate(sub.endDate),
+    cancelledAt: toIsoDate(cancellation.dateCancelled),
+    resignedAt: toIsoDate(resignation.dateResigned),
+    processedAt: toIsoDate(yearend.processedAt || ctx.processingDate),
+    membershipCategory: sub.membershipCategory || null,
+    grade: prof.grade || null,
+    workLocation: prof.workLocation || null,
+    branch: prof.branch || null,
+    region: prof.region || null,
+    section: prof.primarySection || null,
+    paymentType: sub.paymentType || null,
+    paymentFrequency: sub.paymentFrequency || null,
+    subscriptionYear:
+      sub.subscriptionYear === undefined ? null : sub.subscriptionYear,
+    isCurrent: sub.isCurrent === true,
+  };
+}
+
+async function initRabbit() {
+  const rabbitUrl = process.env.RABBIT_URL;
+  if (!rabbitUrl || !String(rabbitUrl).trim()) {
+    throw new Error("RABBIT_URL environment variable is not set or is empty");
+  }
+  let url = String(rabbitUrl).trim();
+  if (!url.startsWith("amqp://") && !url.startsWith("amqps://")) {
+    url = `amqp://${url}`;
+  }
+  await init({
+    url,
+    logger: console,
+    prefetch: 10,
+    connectionName: "subscription-service-reporting-replay",
+    serviceName: "subscription-service",
+  });
+}
+
+async function publishReportingSnapshotForSubscription(subscriptionDoc, profileLean, ctx) {
+  if (!subscriptionDoc || !subscriptionDoc.profileId) {
+    return { success: false, error: "missing_profile_id" };
+  }
+  const payload = buildReportingSnapshotPayload(subscriptionDoc, profileLean, ctx);
+  if (!payload.tenantId || !payload.subscriptionId) {
+    return { success: false, error: "missing_ids" };
+  }
+
+  return publisher.publish(SNAPSHOT_EVENT, payload, {
+    tenantId: payload.tenantId,
+    correlationId: ctx.correlationId,
+    exchange: "membership.events",
+    routingKey: SNAPSHOT_EVENT,
+    metadata: {
+      service: "subscription-service",
+      version: "1.0",
+      purpose: "reporting",
+    },
+  });
+}
+
+async function fetchProfilesByIds(profileIds, tenantId) {
+  if (!profileIds.length) return [];
+  const batchUrl = `${PROFILE_SERVICE_URL}/api/profile/batch`;
+  const response = await axios.get(batchUrl, {
+    params: { profileIds: profileIds.join(",") },
+    headers: {
+      "x-tenant-id": tenantId,
+      "x-internal-request": "true",
+    },
+    timeout: 30000,
+  });
+  return response.data && response.data.data ? response.data.data : [];
+}
+
 async function fetchProfilesForSubscriptions(subscriptions, tenantId) {
   const ids = [
     ...new Set(
       subscriptions
-        .map((sub) => sub.profileId?.toString?.() || String(sub.profileId || ""))
+        .map((sub) => toIdString(sub.profileId))
         .filter(Boolean)
     ),
   ];
 
   const profiles = [];
-  const req = createInternalWorkerReq(tenantId);
   for (const idsChunk of chunk(ids, 100)) {
-    profiles.push(...(await fetchProfilesByIds(idsChunk, tenantId, req)));
+    profiles.push(...(await fetchProfilesByIds(idsChunk, tenantId)));
   }
   return new Map(profiles.map((profile) => [String(profile._id), profile]));
 }
@@ -106,9 +241,9 @@ async function main() {
   if (args.memberId) {
     const wanted = String(args.memberId).trim();
     subscriptions = subscriptions.filter((sub) => {
-      const profileId = sub.profileId?.toString?.() || String(sub.profileId || "");
+      const profileId = toIdString(sub.profileId);
       const profile = profileById.get(profileId);
-      return String(profile?.membershipNumber || "").trim() === wanted;
+      return profileMembershipNumber(profile) === wanted;
     });
   }
 
@@ -117,14 +252,14 @@ async function main() {
   );
 
   if (!args.dryRun) {
-    await initEventSystem();
+    await initRabbit();
   }
 
   let published = 0;
   for (const sub of subscriptions) {
-    const profileId = sub.profileId?.toString?.() || String(sub.profileId || "");
+    const profileId = toIdString(sub.profileId);
     const profileLean = profileById.get(profileId) || null;
-    const memberId = profileLean?.membershipNumber || null;
+    const memberId = profileMembershipNumber(profileLean) || null;
 
     console.log(
       `${args.dryRun ? "[dry-run]" : "[publish]"} subscription=${sub._id} profile=${profileId} member=${memberId || "n/a"}`
@@ -133,14 +268,14 @@ async function main() {
     if (!args.dryRun) {
       const result = await publishReportingSnapshotForSubscription(sub, {
         tenantId: args.tenantId,
-        correlationId: `reporting-snapshot-replay-${crypto.randomUUID()}`,
+        correlationId: `reporting-snapshot-replay-${randomCorrelationId()}`,
         memberId,
         profileLean,
       });
-      if (!result?.success) {
+      if (!result || !result.success) {
         console.warn("Snapshot publish did not report success", {
-          subscriptionId: sub._id?.toString?.(),
-          error: result?.error,
+          subscriptionId: toIdString(sub._id),
+          error: result && result.error,
         });
       }
     }
@@ -157,9 +292,9 @@ main()
   })
   .finally(async () => {
     try {
-      await shutdownEventSystem();
+      await shutdown();
     } catch (err) {
-      if (err?.message) console.warn("RabbitMQ shutdown warning:", err.message);
+      if (err && err.message) console.warn("RabbitMQ shutdown warning:", err.message);
     }
     await mongoose.disconnect();
   });
