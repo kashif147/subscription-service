@@ -7,6 +7,7 @@
 var app = require("../app");
 var debug = require("debug")("subscription-service:server");
 var http = require("http");
+var { mongooseConnection } = require("../config/db");
 
 /**
  * Get port from environment and store in Express.
@@ -22,10 +23,17 @@ app.set("port", port);
 var server = http.createServer(app);
 
 /**
- * Listen on provided port, on all network interfaces.
+ * Listen on provided port after MongoDB is ready (avoids transient 500s on cold start).
  */
 
-server.listen(port, () => console.log(`Server Running on Port: ${port}`));
+mongooseConnection()
+  .then(() => {
+    server.listen(port, () => console.log(`Server Running on Port: ${port}`));
+  })
+  .catch((err) => {
+    console.error("Failed to start subscription-service:", err.message);
+    process.exit(1);
+  });
 server.on("error", onError);
 server.on("listening", onListening);
 
