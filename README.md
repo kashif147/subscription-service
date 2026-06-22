@@ -18,7 +18,7 @@ Base path: **`/api/v1/reminder-batches`**.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/` | Create batch header |
+| `POST` | `/` | Create batch header and **automatically start build** (queue or sync, same as `POST /:batchId/build`) |
 | `GET` | `/` | List batches (paginated) |
 | `GET` | `/:batchId` | Get one batch header |
 | `GET` | `/:batchId/members` | List batch members (paginated) |
@@ -43,6 +43,10 @@ All reminder-batch routes use `ensureAuthenticated` (see `middlewares/auth.mw.js
 | `batchDate` | Yes | ISO date/time |
 | `referencePeriod` | No | e.g. accounting month label |
 | `previousReminderBatchId` | No | Mongo ObjectId string; when omitted for `REMINDER`, last completed reminder batch of the tenant may be inferred for “payment between batches” logic |
+
+After the batch document is created (`draft`), the service **immediately** runs or queues build. With **no** `RABBIT_URL`, the HTTP response is **`201`** with status **`ready`** and populated `countsByTier`. With RabbitMQ, the response is **`201`** with status **`pending_build`** and `buildQueued: true`; poll `GET /:batchId` until **`ready`** or **`failed`**.
+
+**`POST /:batchId/build`** remains available to **rebuild** a batch (`draft`, `failed`, or `pending_build`).
 
 **`GET /`** query: `kind`, `status`, `page`, `limit` (max 100).
 

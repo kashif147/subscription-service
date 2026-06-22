@@ -2,6 +2,7 @@ const { USER_TYPE } = require("../constants/enums");
 const { AppError } = require("../errors/AppError");
 const reminderBatchService = require("../services/reminderBatch.service");
 const reminderBatchRabbit = require("../jobs/reminderBatch.rabbit.js");
+const { runOrQueueReminderBatchBuild } = require("../helpers/reminderBatchBuildTrigger.js");
 const bizLogger = require("../config/bizLogger.js");
 
 function ensureCrm(req, res) {
@@ -26,7 +27,15 @@ function handleError(res, err) {
 async function postCreate(req, res) {
   if (!ensureCrm(req, res)) return;
   try {
-    const data = await reminderBatchService.createReminderBatch(req, req.body || {});
+    const created = await reminderBatchService.createReminderBatch(req, req.body || {});
+    const batchId = String(created._id);
+    const buildOutcome = await runOrQueueReminderBatchBuild(req, batchId);
+    const data = buildOutcome.batch
+      ? buildOutcome.batch
+      : await reminderBatchService.getReminderBatchById(req, batchId);
+    if (buildOutcome.queued) {
+      data.buildQueued = true;
+    }
     return res.status(201).json({ status: "success", data });
   } catch (e) {
     return handleError(res, e);
@@ -83,10 +92,16 @@ async function getMembers(req, res) {
 async function postBuild(req, res) {
   if (!ensureCrm(req, res)) return;
   try {
-    const data = reminderBatchRabbit.isRabbitConfigured()
-      ? await reminderBatchRabbit.publishReminderBuildRequested(req, req.params.batchId)
-      : await reminderBatchService.buildReminderBatch(req, req.params.batchId);
-    return res.success(data);
+    const buildOutcome = await runOrQueueReminderBatchBuild(req, req.params.batchId);
+    if (buildOutcome.batch) {
+      return res.success(buildOutcome.batch);
+    }
+    const batch = await reminderBatchService.getReminderBatchById(req, req.params.batchId);
+    return res.success({
+      ...batch,
+      buildQueued: true,
+      transport: buildOutcome.transport,
+    });
   } catch (e) {
     return handleError(res, e);
   }

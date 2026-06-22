@@ -311,6 +311,7 @@ async function listReminderBatchMembers(req, batchId, query) {
       membershipNo: row.membershipNumber || row.memberId,
       membershipNumber: row.membershipNumber || row.memberId,
       membershipCategory: sub.membershipCategory || "—",
+      paymentType: sub.paymentType || null,
       membershipStatus: sub.subscriptionStatus || "—",
       joiningDate: sub.startDate || profile.joiningDate || profile.createdAt || null,
       outstandingBalance: Number.isFinite(balanceCents)
@@ -645,39 +646,44 @@ async function finalizeBuildReminderBatch(batchId, tenantId) {
 }
 
 async function buildReminderBatch(req, batchId) {
-  const { batch, asOf, prevExecuteAt, req: wreq } = await beginBuildReminderBatch(
-    batchId,
-    req.tenantId,
-    req
-  );
+  try {
+    const { batch, asOf, prevExecuteAt, req: wreq } = await beginBuildReminderBatch(
+      batchId,
+      req.tenantId,
+      req
+    );
 
-  const filter = {
-    tenantId: req.tenantId,
-    isCurrent: true,
-    deleted: { $ne: true },
-    subscriptionStatus: MEMBERSHIP_STATUS.ACTIVE,
-  };
-
-  let lastId = null;
-  for (;;) {
-    const q = lastId ? { ...filter, _id: { $gt: lastId } } : { ...filter };
-    const subs = await Subscription.find(q)
-      .sort({ _id: 1 })
-      .limit(CHUNK)
-      .lean();
-    if (!subs.length) break;
-    lastId = subs[subs.length - 1]._id;
-    await processBuildSubscriptionChunk({
-      batch: batch.toObject ? batch.toObject() : batch,
-      asOf,
-      prevExecuteAt,
-      subs,
+    const filter = {
       tenantId: req.tenantId,
-      req: wreq,
-    });
-  }
+      isCurrent: true,
+      deleted: { $ne: true },
+      subscriptionStatus: MEMBERSHIP_STATUS.ACTIVE,
+    };
 
-  return finalizeBuildReminderBatch(batch._id, req.tenantId);
+    let lastId = null;
+    for (;;) {
+      const q = lastId ? { ...filter, _id: { $gt: lastId } } : { ...filter };
+      const subs = await Subscription.find(q)
+        .sort({ _id: 1 })
+        .limit(CHUNK)
+        .lean();
+      if (!subs.length) break;
+      lastId = subs[subs.length - 1]._id;
+      await processBuildSubscriptionChunk({
+        batch: batch.toObject ? batch.toObject() : batch,
+        asOf,
+        prevExecuteAt,
+        subs,
+        tenantId: req.tenantId,
+        req: wreq,
+      });
+    }
+
+    return finalizeBuildReminderBatch(batch._id, req.tenantId);
+  } catch (err) {
+    await markBuildReminderBatchFailed(batchId, req.tenantId, err);
+    throw err;
+  }
 }
 
 async function beginExecuteReminderBatch(batchId, tenantId, req) {

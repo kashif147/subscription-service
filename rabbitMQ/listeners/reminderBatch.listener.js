@@ -15,7 +15,15 @@ function buildWorkerReq(payload) {
 
 async function handleReminderBuildRequested(payload) {
   const req = buildWorkerReq(payload);
-  await reminderBatchService.buildReminderBatch(req, payload.batchId);
+  try {
+    await reminderBatchService.buildReminderBatch(req, payload.batchId);
+  } catch (err) {
+    console.error("[reminder-batch] build consumer failed", {
+      batchId: payload?.batchId,
+      tenantId: payload?.tenantId,
+      message: err?.message || String(err),
+    });
+  }
 }
 
 async function handleReminderExecuteRequested(payload) {
