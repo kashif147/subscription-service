@@ -239,7 +239,81 @@ async function listReminderBatchMembers(req, batchId, query) {
       .lean(),
     ReminderBatchMember.countDocuments(q),
   ]);
-  return { items, total, page: p, limit: l };
+
+  const profileIds = [
+    ...new Set(items.map((row) => String(row.profileId)).filter(Boolean)),
+  ];
+  const subscriptionIds = [
+    ...new Set(items.map((row) => String(row.subscriptionId)).filter(Boolean)),
+  ];
+  const [profiles, subscriptions] = await Promise.all([
+    profileIds.length
+      ? fetchProfilesByIds(
+          profileIds.map((id) => new mongoose.Types.ObjectId(id)),
+          req.tenantId,
+          req
+        )
+      : [],
+    subscriptionIds.length
+      ? Subscription.find({ _id: { $in: subscriptionIds } }).lean()
+      : [],
+  ]);
+  const profileById = new Map(
+    (profiles || []).map((profile) => [String(profile._id), profile])
+  );
+  const subscriptionById = new Map(
+    (subscriptions || []).map((sub) => [String(sub._id), sub])
+  );
+
+  const enriched = items.map((row) => {
+    const profile = profileById.get(String(row.profileId)) || {};
+    const sub = subscriptionById.get(String(row.subscriptionId)) || {};
+    const personal = profile.personalDetails || profile.personal || {};
+    const contact = personal.contactInfo || profile.contactInfo || {};
+    const fullName =
+      profile.fullName ||
+      profile.userFullName ||
+      personal.fullName ||
+      [personal.forename, personal.surname].filter(Boolean).join(" ") ||
+      "—";
+    const snapshot = row.eligibilitySnapshot || {};
+    const balanceCents =
+      Number(snapshot.net1400ArrearsCents || 0) +
+      Number(snapshot.net1400CurrentCents || 0);
+    return {
+      ...row,
+      fullName,
+      email:
+        contact.email ||
+        profile.email ||
+        profile.userEmail ||
+        personal.email ||
+        "—",
+      membershipNo: row.membershipNumber || row.memberId,
+      membershipNumber: row.membershipNumber || row.memberId,
+      membershipCategory: sub.membershipCategory || "—",
+      membershipStatus: sub.subscriptionStatus || "—",
+      joiningDate: sub.startDate || profile.joiningDate || profile.createdAt || null,
+      outstandingBalance: Number.isFinite(balanceCents)
+        ? balanceCents / 100
+        : 0,
+      lastPaymentDate: snapshot.lastReceiptGlDate || null,
+      workLocation:
+        profile.workLocation?.name ||
+        profile.workLocationName ||
+        profile.workLocation ||
+        "",
+      branch:
+        profile.branch?.name ||
+        profile.branchName ||
+        profile.region?.name ||
+        "",
+      membershipFee: snapshot.feeExpectedCents
+        ? snapshot.feeExpectedCents / 100
+        : null,
+    };
+  });
+  return { items: enriched, total, page: p, limit: l };
 }
 
 /**
@@ -596,6 +670,22 @@ async function beginExecuteReminderBatch(batchId, tenantId, req) {
     tenantId,
   });
   if (!batch) throw AppError.notFound("Reminder batch not found");
+  if (
+    batch.kind === REMINDER_BATCH_KIND.REMINDER &&
+    batch.referencePeriod
+  ) {
+    const cancellationBatch = await ReminderBatch.findOne({
+      tenantId,
+      kind: REMINDER_BATCH_KIND.CANCELLATION,
+      referencePeriod: batch.referencePeriod,
+      status: { $ne: REMINDER_BATCH_STATUS.COMPLETED },
+    }).lean();
+    if (cancellationBatch) {
+      throw AppError.badRequest(
+        "Cancellation batch must be completed before reminder batch execution"
+      );
+    }
+  }
   if (batch.status === REMINDER_BATCH_STATUS.COMPLETED) {
     return { batch, alreadyDone: true, executedAt: null, req: workerReq(req, tenantId) };
   }

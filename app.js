@@ -108,9 +108,13 @@ if (process.env.RABBIT_URL) {
       const {
         startUndergraduateGraduationCancellationJob,
       } = require("./jobs/undergraduateGraduationCancellation.job.js");
+      const {
+        startLifecycleBatchScheduler,
+      } = require("./jobs/lifecycleBatchScheduler.js");
       startCancellationGraceSweep();
       startPostgraduateStudentCategoryRenewalJob();
       startUndergraduateGraduationCancellationJob();
+      startLifecycleBatchScheduler();
       console.log(
         "✅ RabbitMQ fully initialized with middleware (subscription-service)",
       );
@@ -132,9 +136,13 @@ if (process.env.RABBIT_URL) {
     const {
       stopUndergraduateGraduationCancellationJob,
     } = require("./jobs/undergraduateGraduationCancellation.job.js");
+    const {
+      stopLifecycleBatchScheduler,
+    } = require("./jobs/lifecycleBatchScheduler.js");
     stopCancellationGraceSweep();
     stopPostgraduateStudentCategoryRenewalJob();
     stopUndergraduateGraduationCancellationJob();
+    stopLifecycleBatchScheduler();
     await shutdownEventSystem();
     process.exit(0);
   });
@@ -150,9 +158,13 @@ if (process.env.RABBIT_URL) {
     const {
       stopUndergraduateGraduationCancellationJob,
     } = require("./jobs/undergraduateGraduationCancellation.job.js");
+    const {
+      stopLifecycleBatchScheduler,
+    } = require("./jobs/lifecycleBatchScheduler.js");
     stopCancellationGraceSweep();
     stopPostgraduateStudentCategoryRenewalJob();
     stopUndergraduateGraduationCancellationJob();
+    stopLifecycleBatchScheduler();
     await shutdownEventSystem();
     process.exit(0);
   });
