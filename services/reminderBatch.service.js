@@ -221,6 +221,25 @@ async function getReminderBatchById(req, batchId) {
   return doc;
 }
 
+async function deleteDraftReminderBatch(req, batchId) {
+  if (!mongoose.Types.ObjectId.isValid(batchId)) {
+    throw AppError.badRequest("Invalid batchId");
+  }
+  const batch = await ReminderBatch.findOne({
+    _id: batchId,
+    tenantId: req.tenantId,
+  });
+  if (!batch) throw AppError.notFound("Reminder batch not found");
+  if (batch.status !== REMINDER_BATCH_STATUS.DRAFT) {
+    throw AppError.badRequest("Only draft batches can be deleted");
+  }
+
+  await ReminderBatchMember.deleteMany({ batchId: batch._id });
+  await ReminderBatch.deleteOne({ _id: batch._id, tenantId: req.tenantId });
+
+  return { deleted: true, batchId: batch._id.toString(), kind: batch.kind };
+}
+
 async function listReminderBatchMembers(req, batchId, query) {
   await getReminderBatchById(req, batchId);
   const { tier, included, page = 1, limit = 500 } = query;
@@ -962,6 +981,7 @@ module.exports = {
   createReminderBatch,
   listReminderBatches,
   getReminderBatchById,
+  deleteDraftReminderBatch,
   listReminderBatchMembers,
   buildReminderBatch,
   executeReminderBatch,

@@ -13,6 +13,7 @@ router.get("/", ensureAuthenticated, reminderBatch.getList);
 router.get("/:batchId/members", ensureAuthenticated, reminderBatch.getMembers);
 router.post("/:batchId/build", ensureAuthenticated, reminderBatch.postBuild);
 router.post("/:batchId/execute", ensureAuthenticated, reminderBatch.postExecute);
+router.delete("/:batchId", ensureAuthenticated, reminderBatch.deleteDraft);
 router.get("/:batchId", ensureAuthenticated, reminderBatch.getOne);
 
 module.exports = router;

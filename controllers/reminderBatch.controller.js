@@ -53,6 +53,19 @@ async function getOne(req, res) {
   }
 }
 
+async function deleteDraft(req, res) {
+  if (!ensureCrm(req, res)) return;
+  try {
+    const data = await reminderBatchService.deleteDraftReminderBatch(
+      req,
+      req.params.batchId
+    );
+    return res.success(data);
+  } catch (e) {
+    return handleError(res, e);
+  }
+}
+
 async function getMembers(req, res) {
   if (!ensureCrm(req, res)) return;
   try {
@@ -118,6 +131,7 @@ module.exports = {
   postCreate,
   getList,
   getOne,
+  deleteDraft,
   getMembers,
   postBuild,
   postExecute,
