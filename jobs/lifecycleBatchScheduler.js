@@ -11,102 +11,16 @@ const {
   fetchNotificationRecipients,
 } = require("../helpers/tenantLifecycleClient");
 const { createInternalWorkerReq } = require("../helpers/serviceClient");
+const {
+  formatLifecycleBatchName,
+  isScheduledRunDay,
+  referencePeriodFor,
+  scheduledBatchDateFor,
+} = require("../helpers/lifecycleBatchSchedule");
 
-const INTERVAL_MS = parseInt(
-  process.env.LIFECYCLE_BATCH_SCHEDULER_MS || String(60 * 60 * 1000),
-  10
-);
 
 let timer = null;
 let running = false;
-
-function partsInTimezone(date, timezone) {
-  const fmt = new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone || "Europe/Dublin",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    weekday: "short",
-  });
-  const parts = {};
-  for (const part of fmt.formatToParts(date)) {
-    if (part.type !== "literal") parts[part.type] = part.value;
-  }
-  return parts;
-}
-
-function ymdInTimezone(date, timezone) {
-  const p = partsInTimezone(date, timezone);
-  return `${p.year}-${p.month}-${p.day}`;
-}
-
-function referencePeriodFor(date, timezone) {
-  const p = partsInTimezone(date, timezone);
-  return `${p.year}-${p.month}`;
-}
-
-function dayNumberFor(date, timezone) {
-  return Number(partsInTimezone(date, timezone).day);
-}
-
-function isWeekend(date, timezone) {
-  const weekday = partsInTimezone(date, timezone).weekday;
-  return weekday === "Sat" || weekday === "Sun";
-}
-
-function eachDateYmd(startDate, endDate, timezone) {
-  const out = [];
-  const start = new Date(startDate);
-  const end = new Date(endDate || startDate);
-  if (Number.isNaN(start.getTime())) return out;
-  const cursor = new Date(Date.UTC(
-    start.getUTCFullYear(),
-    start.getUTCMonth(),
-    start.getUTCDate()
-  ));
-  const until = Number.isNaN(end.getTime()) ? cursor : new Date(Date.UTC(
-    end.getUTCFullYear(),
-    end.getUTCMonth(),
-    end.getUTCDate()
-  ));
-  while (cursor <= until) {
-    out.push(ymdInTimezone(cursor, timezone));
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
-  }
-  return out;
-}
-
-function buildClosedDateSet(config, timezone) {
-  const closed = new Set();
-  for (const h of config.publicHolidays || []) {
-    eachDateYmd(h.startDate, h.endDate, timezone).forEach((x) => closed.add(x));
-  }
-  for (const h of config.primaryOffice?.nonWorkingDays || []) {
-    eachDateYmd(h.startDate, h.endDate, timezone).forEach((x) => closed.add(x));
-  }
-  return closed;
-}
-
-function isScheduledRunDay(config, now = new Date()) {
-  const timezone = config.regionalSettings?.timezone || "Europe/Dublin";
-  const mode =
-    config.lifecycleBatches?.schedule?.dayMode || "FIRST_WORKING_DAY";
-  if (mode === "FIRST_DAY") {
-    return dayNumberFor(now, timezone) === 1;
-  }
-
-  const nowYmd = ymdInTimezone(now, timezone);
-  const currentMonth = referencePeriodFor(now, timezone);
-  const closed = buildClosedDateSet(config, timezone);
-  for (let day = 1; day <= 7; day += 1) {
-    const probe = new Date(`${currentMonth}-${String(day).padStart(2, "0")}T12:00:00.000Z`);
-    const ymd = ymdInTimezone(probe, timezone);
-    if (!isWeekend(probe, timezone) && !closed.has(ymd)) {
-      return nowYmd === ymd;
-    }
-  }
-  return false;
-}
 
 async function notifyTenant(config, title, body, metadata = {}) {
   const tenantId = config.tenantId;
@@ -155,13 +69,12 @@ async function ensureMonthlyBatch(config, kind, req, now) {
   const referencePeriod = referencePeriodFor(now, timezone);
   const existing = await findMonthlyBatch(config.tenantId, kind, referencePeriod);
   if (existing) return existing;
-  const label = kind === REMINDER_BATCH_KIND.CANCELLATION
-    ? "Cancellation"
-    : "Reminder";
+  const batchDate = scheduledBatchDateFor(config, now);
+  const name = formatLifecycleBatchName(kind, batchDate, timezone);
   return reminderBatchService.createReminderBatch(req, {
-    name: `${label} batch ${referencePeriod}`,
+    name,
     kind,
-    batchDate: now.toISOString(),
+    batchDate: batchDate.toISOString(),
     referencePeriod,
   });
 }
@@ -321,6 +234,23 @@ async function processTenant(config, now = new Date()) {
   return { referencePeriod, cancellationBatch, reminderBatch };
 }
 
+function msUntilNextMinute() {
+  const now = new Date();
+  return 60000 - (now.getSeconds() * 1000 + now.getMilliseconds());
+}
+
+function scheduleNextLifecycleBatchRun() {
+  timer = setTimeout(() => {
+    runLifecycleBatchSchedulerOnce()
+      .catch((err) =>
+        console.error("[LIFECYCLE_BATCH_SCHEDULER] Interval error:", err.message)
+      )
+      .finally(() => {
+        scheduleNextLifecycleBatchRun();
+      });
+  }, msUntilNextMinute());
+}
+
 async function runLifecycleBatchSchedulerOnce(now = new Date()) {
   if (running) return { skipped: "already_running" };
   running = true;
@@ -355,21 +285,17 @@ function startLifecycleBatchScheduler() {
     );
     return;
   }
-  timer = setInterval(() => {
-    runLifecycleBatchSchedulerOnce().catch((err) =>
-      console.error("[LIFECYCLE_BATCH_SCHEDULER] Interval error:", err.message)
-    );
-  }, INTERVAL_MS);
   setTimeout(() => {
     runLifecycleBatchSchedulerOnce().catch((err) =>
       console.error("[LIFECYCLE_BATCH_SCHEDULER] Initial run error:", err.message)
     );
   }, 20000);
+  scheduleNextLifecycleBatchRun();
 }
 
 function stopLifecycleBatchScheduler() {
   if (timer) {
-    clearInterval(timer);
+    clearTimeout(timer);
     timer = null;
   }
 }
