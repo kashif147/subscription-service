@@ -3,7 +3,9 @@ const { MEMBERSHIP_EVENTS } = require("../events");
 const { processRenewalBatchExecute } = require("../../services/renewalBatch.service");
 
 async function handleRenewalExecuteRequested(payload) {
-  const batchId = payload?.batchId ? String(payload.batchId) : null;
+  const data =
+    payload?.data && typeof payload.data === "object" ? payload.data : payload;
+  const batchId = data?.batchId ? String(data.batchId) : null;
   if (!batchId) return;
   await processRenewalBatchExecute(batchId);
 }

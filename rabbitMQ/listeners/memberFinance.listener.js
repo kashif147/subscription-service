@@ -6,6 +6,7 @@ const {
   findCurrentSubscriptionByMemberId,
 } = require("../../services/reminderClear.service");
 const { createInternalWorkerReq } = require("../../helpers/serviceClient");
+const { MEMBERSHIP_EVENTS } = require("../events");
 
 async function handlePaymentReceiptPosted(payload) {
   const data = payload?.data || payload;

@@ -5,16 +5,23 @@ const ReminderBatchMember = require("../../models/reminderBatchMember.model");
 const Subscription = require("../../models/subscription.model");
 const { createInternalWorkerReq } = require("../../helpers/serviceClient");
 
+function eventData(payload) {
+  return payload?.data && typeof payload.data === "object"
+    ? payload.data
+    : payload;
+}
+
 function buildWorkerReq(payload) {
-  const tenantId = payload?.tenantId;
+  const data = eventData(payload);
+  const tenantId = data?.tenantId ?? payload?.tenantId;
   const req = createInternalWorkerReq(tenantId, {
-    userId: payload?.actorUserId || null,
-    email: payload?.actorEmail || null,
+    userId: data?.actorUserId || null,
+    email: data?.actorEmail || null,
   });
-  if (payload?.headers && typeof payload.headers === "object") {
+  if (data?.headers && typeof data.headers === "object") {
     req.headers = {
       ...req.headers,
-      ...payload.headers,
+      ...data.headers,
       "x-tenant-id": tenantId,
       "x-internal-request": "true",
     };
@@ -23,28 +30,32 @@ function buildWorkerReq(payload) {
 }
 
 async function handleReminderBuildRequested(payload) {
+  const data = eventData(payload);
   const req = buildWorkerReq(payload);
   try {
-    await reminderBatchService.buildReminderBatch(req, payload.batchId);
+    await reminderBatchService.buildReminderBatch(req, data?.batchId);
   } catch (err) {
     console.error("[reminder-batch] build consumer failed", {
-      batchId: payload?.batchId,
-      tenantId: payload?.tenantId,
+      batchId: data?.batchId,
+      tenantId: data?.tenantId ?? payload?.tenantId,
       message: err?.message || String(err),
     });
+    throw err;
   }
 }
 
 async function handleReminderExecuteRequested(payload) {
+  const data = eventData(payload);
   const req = buildWorkerReq(payload);
-  await reminderBatchService.executeReminderBatch(req, payload.batchId);
+  await reminderBatchService.executeReminderBatch(req, data?.batchId);
 }
 
 async function handleReminderMonthlyOrchestrateRequested(payload) {
+  const data = eventData(payload);
   const req = buildWorkerReq(payload);
   await reminderBatchService.runMonthlyOrchestration(req, {
-    cancellationBatchId: payload.cancellationBatchId,
-    reminderBatchId: payload.reminderBatchId,
+    cancellationBatchId: data?.cancellationBatchId,
+    reminderBatchId: data?.reminderBatchId,
   });
 }
 
