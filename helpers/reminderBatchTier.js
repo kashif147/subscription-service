@@ -61,11 +61,15 @@ function daysInCalendarYear(year) {
   );
 }
 
-/** Net amount owed on 1400: materialized arrears + current (both credit member liability). */
+/** Net amount owed after member credit is applied to 1400 arrears/current. */
 function net1400OwedCents(snap) {
+  const netAfterCredit = Number(snap?.netOutstandingAfterCreditCents);
+  if (Number.isFinite(netAfterCredit)) return Math.max(0, netAfterCredit);
+
   const ar = Number(snap?.net1400ArrearsCents) || 0;
   const cur = Number(snap?.net1400CurrentCents) || 0;
-  return ar + cur;
+  const availableCredit = Number(snap?.availableCreditCents) || 0;
+  return Math.max(0, ar + cur - availableCredit);
 }
 
 /**

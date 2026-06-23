@@ -44,6 +44,26 @@ describe("isFinanciallyDelinquent", () => {
     };
     assert.equal(isFinanciallyDelinquent(snap, asOf, category, 2026), true);
   });
+
+  it("returns false when available credit makes the member a creditor", () => {
+    const snap = {
+      net1400ArrearsCents: 1_79,
+      net1400CurrentCents: 0,
+      availableCreditCents: 81_50,
+      lastReceiptGlDate: "2026-06-01T00:00:00.000Z",
+    };
+    assert.equal(isFinanciallyDelinquent(snap, asOf, category, 2026), false);
+  });
+
+  it("returns true when credit-adjusted debt still exceeds the 90-day minimum", () => {
+    const snap = {
+      net1400ArrearsCents: 240_00,
+      net1400CurrentCents: 0,
+      availableCreditCents: 90_00,
+      lastReceiptGlDate: null,
+    };
+    assert.equal(isFinanciallyDelinquent(snap, asOf, category, 2026), true);
+  });
 });
 
 describe("classifyMaxReminderTier", () => {
