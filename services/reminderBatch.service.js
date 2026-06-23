@@ -21,6 +21,7 @@ const {
 const {
   fetchProfilesByIds,
   fetchReminderEligibilityBulk,
+  fetchMemberSummariesByMemberIds,
   createInternalWorkerReq,
   getExpectedAnnualFeeCents,
 } = require("../helpers/serviceClient");
@@ -49,6 +50,84 @@ const {
 } = require("../rabbitMQ/publishers/reminder.comms.requested.publisher.js");
 
 const CHUNK = REMINDER_BATCH_BUILD_EXECUTE_CHUNK_SIZE;
+
+function centsToEuro(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n / 100 : null;
+}
+
+function contactInfoFromProfile(profile = {}) {
+  return (
+    profile.contactInfo ||
+    profile.personalInfo?.contactInfo ||
+    profile.personalDetails?.contactInfo ||
+    {}
+  );
+}
+
+function fullNameFromProfile(profile = {}) {
+  const personal = profile.personalInfo || profile.personalDetails || profile.personal || {};
+  const fromParts = [personal.forename, personal.surname]
+    .map((part) => String(part || "").trim())
+    .filter(Boolean)
+    .join(" ");
+  return (
+    profile.fullName ||
+    profile.userFullName ||
+    personal.fullName ||
+    fromParts ||
+    "—"
+  );
+}
+
+function emailFromProfile(profile = {}) {
+  const contact = contactInfoFromProfile(profile);
+  const pref = String(contact.preferredEmail || "").trim().toLowerCase();
+  if ((pref === "personal" || pref === "person") && contact.personalEmail) {
+    return String(contact.personalEmail).trim();
+  }
+  if (pref === "work" && contact.workEmail) {
+    return String(contact.workEmail).trim();
+  }
+  if (contact.preferredEmail && String(contact.preferredEmail).includes("@")) {
+    return String(contact.preferredEmail).trim();
+  }
+  return (
+    contact.email ||
+    contact.personalEmail ||
+    contact.workEmail ||
+    profile.email ||
+    profile.userEmail ||
+    profile.normalizedEmail ||
+    "—"
+  );
+}
+
+function fullAddressFromProfile(profile = {}) {
+  const contact = contactInfoFromProfile(profile);
+  const direct = contact.fullAddress || contact.full_address || profile.fullAddress;
+  if (direct && String(direct).trim()) return String(direct).trim();
+  const parts = [
+    contact.buildingOrHouse,
+    contact.streetOrRoad,
+    contact.areaOrTown,
+    contact.countyCityOrPostCode,
+    contact.country,
+  ]
+    .map((part) => String(part || "").trim())
+    .filter(Boolean);
+  return parts.length ? parts.join(", ") : "—";
+}
+
+function arrearsFromSummary(summary) {
+  const row = (summary?.buckets || []).find(
+    (bucket) =>
+      String(bucket?.accountCode || "") === "1400" &&
+      String(bucket?.bucket || "") === "arrears"
+  );
+  const amount = centsToEuro(row?.amount);
+  return amount == null ? null : Math.max(0, amount);
+}
 
 function workerReq(req, tenantId) {
   if (req && req.headers) return req;
@@ -265,7 +344,15 @@ async function listReminderBatchMembers(req, batchId, query) {
   const subscriptionIds = [
     ...new Set(items.map((row) => String(row.subscriptionId)).filter(Boolean)),
   ];
-  const [profiles, subscriptions] = await Promise.all([
+  const memberIds = [
+    ...new Set(
+      items
+        .map((row) => row.membershipNumber || row.memberId)
+        .map((id) => String(id || "").trim())
+        .filter(Boolean)
+    ),
+  ];
+  const [profiles, subscriptions, summaries] = await Promise.all([
     profileIds.length
       ? fetchProfilesByIds(
           profileIds.map((id) => new mongoose.Types.ObjectId(id)),
@@ -276,6 +363,9 @@ async function listReminderBatchMembers(req, batchId, query) {
     subscriptionIds.length
       ? Subscription.find({ _id: { $in: subscriptionIds } }).lean()
       : [],
+    memberIds.length
+      ? fetchMemberSummariesByMemberIds(memberIds, req.tenantId, req)
+      : [],
   ]);
   const profileById = new Map(
     (profiles || []).map((profile) => [String(profile._id), profile])
@@ -283,41 +373,41 @@ async function listReminderBatchMembers(req, batchId, query) {
   const subscriptionById = new Map(
     (subscriptions || []).map((sub) => [String(sub._id), sub])
   );
+  const summaryByMemberId = new Map(
+    (summaries || []).map((row) => [String(row.memberId || "").trim(), row.summary])
+  );
 
   const enriched = items.map((row) => {
     const profile = profileById.get(String(row.profileId)) || {};
     const sub = subscriptionById.get(String(row.subscriptionId)) || {};
-    const personal = profile.personalDetails || profile.personal || {};
-    const contact = personal.contactInfo || profile.contactInfo || {};
-    const fullName =
-      profile.fullName ||
-      profile.userFullName ||
-      personal.fullName ||
-      [personal.forename, personal.surname].filter(Boolean).join(" ") ||
-      "—";
     const snapshot = row.eligibilitySnapshot || {};
+    const memberId = row.membershipNumber || row.memberId;
+    const summary = summaryByMemberId.get(String(memberId || "").trim()) || null;
     const balanceCents =
       Number(snapshot.net1400ArrearsCents || 0) +
       Number(snapshot.net1400CurrentCents || 0);
+    const outstandingBalance = Number.isFinite(balanceCents)
+      ? balanceCents / 100
+      : 0;
+    const summaryAmountOwed = centsToEuro(summary?.outstandingBalance);
+    const snapshotArrears = centsToEuro(snapshot.net1400ArrearsCents);
     return {
       ...row,
-      fullName,
-      email:
-        contact.email ||
-        profile.email ||
-        profile.userEmail ||
-        personal.email ||
-        "—",
+      fullName: fullNameFromProfile(profile),
+      email: emailFromProfile(profile),
+      fullAddress: fullAddressFromProfile(profile),
       membershipNo: row.membershipNumber || row.memberId,
       membershipNumber: row.membershipNumber || row.memberId,
       membershipCategory: sub.membershipCategory || "—",
       paymentType: sub.paymentType || null,
       membershipStatus: sub.subscriptionStatus || "—",
       joiningDate: sub.startDate || profile.joiningDate || profile.createdAt || null,
-      outstandingBalance: Number.isFinite(balanceCents)
-        ? balanceCents / 100
-        : 0,
-      lastPaymentDate: snapshot.lastReceiptGlDate || null,
+      outstandingBalance,
+      arrears:
+        snapshotArrears == null ? arrearsFromSummary(summary) : Math.max(0, snapshotArrears),
+      amountOwedToDate: summaryAmountOwed == null ? outstandingBalance : summaryAmountOwed,
+      lastPaymentAmount: centsToEuro(summary?.lastPayment?.amount),
+      lastPaymentDate: summary?.lastPayment?.date || snapshot.lastReceiptGlDate || null,
       workLocation:
         profile.workLocation?.name ||
         profile.workLocationName ||
