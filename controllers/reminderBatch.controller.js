@@ -94,7 +94,11 @@ async function postBuild(req, res) {
   try {
     const buildOutcome = await runOrQueueReminderBatchBuild(req, req.params.batchId);
     if (buildOutcome.batch) {
-      return res.success(buildOutcome.batch);
+      return res.success({
+        ...buildOutcome.batch,
+        buildQueued: buildOutcome.queued,
+        transport: buildOutcome.transport,
+      });
     }
     const batch = await reminderBatchService.getReminderBatchById(req, req.params.batchId);
     return res.success({

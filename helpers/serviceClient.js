@@ -24,18 +24,6 @@ function createInternalWorkerReq(tenantId, actor = {}) {
   };
 }
 
-function buildAccountInternalHeaders(tenantId) {
-  const key = process.env.ACCOUNTS_API_KEY || '';
-  if (!key) {
-    throw new Error('ACCOUNTS_API_KEY is required for account-service internal calls');
-  }
-  return {
-    'Content-Type': 'application/json',
-    'x-tenant-id': tenantId || 'default',
-    'x-api-key': key,
-  };
-}
-
 function buildServiceHeaders(req, tenantId) {
   const headers = {
     'Content-Type': 'application/json',
@@ -87,16 +75,9 @@ function buildServiceHeaders(req, tenantId) {
  * Same base as {@link buildServiceHeaders} (profile batch / cross-service) — forward
  * `authorization`, `x-jwt-verified` + `x-auth-source: gateway`, `x-tenant-id`, `x-user-*`
  * so account-service `ensureAuthenticated` can validate like other gateway-sourced calls.
- * Optional: if `ACCOUNTS_API_KEY` is set, add `x-api-key` (account routes accept key OR JWT;
- * use key for workers/RabbitMQ that have no user token).
  */
 function buildAccountServiceRequestHeaders(req, tenantId) {
-  const base = buildServiceHeaders(req, tenantId);
-  const key = process.env.ACCOUNTS_API_KEY || "";
-  if (key) {
-    return { ...base, "x-api-key": key };
-  }
-  return base;
+  return buildServiceHeaders(req, tenantId);
 }
 
 /**
@@ -375,7 +356,10 @@ async function postMemberOutstandingWriteOff({
 
   const base = ACCOUNT_SERVICE_URL.replace(/\/$/, "");
   const url = `${base}/api/internal/members/writeoff`;
-  const headers = buildAccountInternalHeaders(tenantId);
+  const headers = buildAccountServiceRequestHeaders(
+    req || createInternalWorkerReq(tenantId),
+    tenantId
+  );
   const resolvedDate =
     date instanceof Date ? date.toISOString().slice(0, 10) : String(date || "").slice(0, 10);
   const cleanDocNoBase = safeDocNoPart(docNoBase);
@@ -552,9 +536,9 @@ function getMemberIdLookupKeys(memberId) {
  * @param {string|Date} [asOf]
  * @returns {Promise<object[]>} snapshot items (same shape as GET single)
  */
-async function fetchReminderEligibilityBulk(memberIds, tenantId, asOf) {
+async function fetchReminderEligibilityBulk(memberIds, tenantId, asOf, req) {
   if (!memberIds || memberIds.length === 0) return [];
-  const headers = buildAccountInternalHeaders(tenantId);
+  const headers = buildServiceHeaders(req || createInternalWorkerReq(tenantId), tenantId);
   const url = `${ACCOUNT_SERVICE_URL}/api/internal/members/reminder-eligibility-bulk`;
   const asOfIso =
     asOf instanceof Date

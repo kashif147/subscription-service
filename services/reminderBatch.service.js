@@ -510,7 +510,7 @@ async function processBuildSubscriptionChunk({
   const snapByMember = new Map();
   for (let i = 0; i < memberIdList.length; i += REMINDER_BATCH_ELIGIBILITY_CHUNK) {
     const chunk = memberIdList.slice(i, i + REMINDER_BATCH_ELIGIBILITY_CHUNK);
-    const items = await fetchReminderEligibilityBulk(chunk, tenantId, asOf);
+    const items = await fetchReminderEligibilityBulk(chunk, tenantId, asOf, r);
     for (const row of items) {
       if (row?.memberId) snapByMember.set(String(row.memberId), row);
     }
@@ -932,6 +932,34 @@ async function markBuildReminderBatchFailed(batchId, tenantId, err) {
   );
 }
 
+async function markReminderBatchBuildQueued(batchId, tenantId, req) {
+  if (!mongoose.Types.ObjectId.isValid(batchId)) {
+    throw AppError.badRequest("Invalid batchId");
+  }
+  const batch = await ReminderBatch.findOne({ _id: batchId, tenantId });
+  if (!batch) throw AppError.notFound("Reminder batch not found");
+
+  const allowed = new Set([
+    REMINDER_BATCH_STATUS.DRAFT,
+    REMINDER_BATCH_STATUS.FAILED,
+    REMINDER_BATCH_STATUS.PENDING_BUILD,
+  ]);
+  if (!allowed.has(batch.status)) {
+    throw AppError.badRequest("Batch cannot be rebuilt in its current status");
+  }
+
+  batch.status = REMINDER_BATCH_STATUS.PENDING_BUILD;
+  batch.buildStartedAt = batch.buildStartedAt || new Date();
+  batch.error = null;
+  batch.updatedBy = await resolveCrmUserObjectId(req);
+  batch.buildProgress = {
+    ...(batch.buildProgress?.toObject?.() ?? batch.buildProgress ?? {}),
+    lastError: null,
+  };
+  await batch.save();
+  return batch.toObject();
+}
+
 /**
  * Synchronous monthly ordering: cancellation execute then reminder build (no Redis).
  */
@@ -999,6 +1027,7 @@ module.exports = {
   finalizeExecuteReminderBatchSuccess,
   markExecuteReminderBatchFailed,
   markBuildReminderBatchFailed,
+  markReminderBatchBuildQueued,
   runMonthlyOrchestration,
   CHUNK,
 };

@@ -171,7 +171,7 @@ async function tryClearRemindersAfterMemberReceipt({ tenantId, memberId, asOf },
   if (!sub) return "none";
 
   const asOfDate = asOf ? new Date(asOf) : new Date();
-  const items = await fetchReminderEligibilityBulk([mid], tenantId, asOfDate);
+  const items = await fetchReminderEligibilityBulk([mid], tenantId, asOfDate, wreq);
   const snap = items[0] || {};
 
   const full = await clearRemindersIfSettled(sub, snap, {

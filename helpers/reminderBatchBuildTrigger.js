@@ -7,8 +7,22 @@ const reminderBatchService = require("../services/reminderBatch.service");
  */
 async function runOrQueueReminderBatchBuild(req, batchId) {
   if (reminderBatchRabbit.isRabbitConfigured()) {
-    await reminderBatchRabbit.publishReminderBuildRequested(req, batchId);
-    return { queued: true, transport: "rabbitmq" };
+    const batch = await reminderBatchService.markReminderBatchBuildQueued(
+      batchId,
+      req.tenantId,
+      req
+    );
+    try {
+      await reminderBatchRabbit.publishReminderBuildRequested(req, batchId);
+      return { queued: true, transport: "rabbitmq", batch };
+    } catch (error) {
+      await reminderBatchService.markBuildReminderBatchFailed(
+        batchId,
+        req.tenantId,
+        error
+      );
+      throw error;
+    }
   }
   const batch = await reminderBatchService.buildReminderBatch(req, batchId);
   return { queued: false, transport: "sync", batch };

@@ -7,10 +7,19 @@ const { createInternalWorkerReq } = require("../../helpers/serviceClient");
 
 function buildWorkerReq(payload) {
   const tenantId = payload?.tenantId;
-  return createInternalWorkerReq(tenantId, {
+  const req = createInternalWorkerReq(tenantId, {
     userId: payload?.actorUserId || null,
     email: payload?.actorEmail || null,
   });
+  if (payload?.headers && typeof payload.headers === "object") {
+    req.headers = {
+      ...req.headers,
+      ...payload.headers,
+      "x-tenant-id": tenantId,
+      "x-internal-request": "true",
+    };
+  }
+  return req;
 }
 
 async function handleReminderBuildRequested(payload) {

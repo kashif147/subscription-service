@@ -5,6 +5,27 @@ function isRabbitConfigured() {
   return Boolean(process.env.RABBIT_URL && String(process.env.RABBIT_URL).trim());
 }
 
+function captureForwardHeaders(req) {
+  const headers = {};
+  [
+    "authorization",
+    "x-jwt-verified",
+    "x-auth-source",
+    "x-user-id",
+    "x-user-email",
+    "x-user-type",
+    "x-user-roles",
+    "x-user-permissions",
+    "x-tenant-id",
+    "x-correlation-id",
+  ].forEach((key) => {
+    const value = req?.headers?.[key];
+    if (value) headers[key] = value;
+  });
+  headers["x-internal-request"] = "true";
+  return headers;
+}
+
 async function publishReminderBuildRequested(req, batchId) {
   if (!isRabbitConfigured()) throw new Error("RABBIT_URL not configured");
   await publisher.publish(
@@ -14,6 +35,7 @@ async function publishReminderBuildRequested(req, batchId) {
       tenantId: String(req.tenantId),
       actorUserId: req.userId || null,
       actorEmail: req.user?.email || null,
+      headers: captureForwardHeaders(req),
     },
     {
       tenantId: req.tenantId,
@@ -34,6 +56,7 @@ async function publishReminderExecuteRequested(req, batchId) {
       tenantId: String(req.tenantId),
       actorUserId: req.userId || null,
       actorEmail: req.user?.email || null,
+      headers: captureForwardHeaders(req),
     },
     {
       tenantId: req.tenantId,
@@ -59,6 +82,7 @@ async function publishReminderMonthlyOrchestrateRequested(req, body) {
       tenantId: String(req.tenantId),
       actorUserId: req.userId || null,
       actorEmail: req.user?.email || null,
+      headers: captureForwardHeaders(req),
     },
     {
       tenantId: req.tenantId,
