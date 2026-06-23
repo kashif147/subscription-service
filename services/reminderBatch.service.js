@@ -384,13 +384,17 @@ async function listReminderBatchMembers(req, batchId, query) {
     const memberId = row.membershipNumber || row.memberId;
     const summary = summaryByMemberId.get(String(memberId || "").trim()) || null;
     const balanceCents =
-      Number(snapshot.net1400ArrearsCents || 0) +
-      Number(snapshot.net1400CurrentCents || 0);
+      Number(snapshot.gross1400OwedCents ?? snapshot.netOutstandingAfterCreditCents ??
+        (Number(snapshot.net1400ArrearsCents || 0) +
+          Number(snapshot.net1400CurrentCents || 0)));
     const outstandingBalance = Number.isFinite(balanceCents)
       ? balanceCents / 100
       : 0;
     const summaryAmountOwed = centsToEuro(summary?.outstandingBalance);
     const snapshotArrears = centsToEuro(snapshot.net1400ArrearsCents);
+    const lastPaymentAmount =
+      centsToEuro(summary?.lastPayment?.amount) ??
+      centsToEuro(snapshot.lastReceiptAmountCents);
     return {
       ...row,
       fullName: fullNameFromProfile(profile),
@@ -406,7 +410,7 @@ async function listReminderBatchMembers(req, batchId, query) {
       arrears:
         snapshotArrears == null ? arrearsFromSummary(summary) : Math.max(0, snapshotArrears),
       amountOwedToDate: summaryAmountOwed == null ? outstandingBalance : summaryAmountOwed,
-      lastPaymentAmount: centsToEuro(summary?.lastPayment?.amount),
+      lastPaymentAmount,
       lastPaymentDate: summary?.lastPayment?.date || snapshot.lastReceiptGlDate || null,
       workLocation:
         profile.workLocation?.name ||
