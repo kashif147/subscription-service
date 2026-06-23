@@ -33,6 +33,9 @@ const {
   daysInCalendarYear,
   reminderTierAnchorDate,
   resolveBatchExclusionReason,
+  amountOwedToDateCents,
+  priorArrearsCents,
+  qualifyingReminderOwedCents,
 } = require("../helpers/reminderBatchTier");
 const {
   clearRemindersIfSettled,
@@ -55,24 +58,6 @@ const CHUNK = REMINDER_BATCH_BUILD_EXECUTE_CHUNK_SIZE;
 function centsToEuro(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n / 100 : null;
-}
-
-function dayOfYearUtc(date) {
-  const d = date instanceof Date ? date : new Date(date);
-  if (Number.isNaN(d.getTime())) return null;
-  const start = Date.UTC(d.getUTCFullYear(), 0, 1);
-  return Math.floor((Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - start) / 86400000) + 1;
-}
-
-function proRatedAmountOwedToDateCents(snapshot = {}, sub = {}) {
-  const feeCents =
-    Number(snapshot.feeExpectedCents) || getExpectedAnnualFeeCents(sub.membershipCategory);
-  if (!feeCents) return 0;
-  const asOf = snapshot.balanceAsOf || new Date();
-  const d = dayOfYearUtc(asOf);
-  if (!d) return 0;
-  const year = new Date(asOf).getUTCFullYear();
-  return Math.min(feeCents, Math.max(0, Math.round((feeCents / daysInCalendarYear(year)) * d)));
 }
 
 function profileSnapshot(profile = {}) {
@@ -428,21 +413,28 @@ async function listReminderBatchMembers(req, batchId, query) {
       snapshot.profileSnapshot ||
       {};
     const summary = summaryByMemberId.get(String(memberId || "").trim()) || null;
-    const snapshotGrossOwedCents =
-      snapshot.gross1400OwedCents != null
-        ? Number(snapshot.gross1400OwedCents)
-        : Number(snapshot.net1400ArrearsCents || 0) +
-          Number(snapshot.net1400CurrentCents || 0);
-    const balanceCents = Number.isFinite(snapshotGrossOwedCents)
-      ? snapshotGrossOwedCents
-      : Number(snapshot.netOutstandingAfterCreditCents || 0);
-    const outstandingBalance = Number.isFinite(balanceCents)
-      ? balanceCents / 100
-      : 0;
-    const summaryAmountOwed = centsToEuro(summary?.outstandingBalance);
-    const proRatedAmountOwed = centsToEuro(
-      proRatedAmountOwedToDateCents(snapshot, sub)
+    const balanceAsOf = snapshot.balanceAsOf || new Date();
+    const feeYear =
+      snapshot.feeProRataCalendarYear != null
+        ? Number(snapshot.feeProRataCalendarYear)
+        : new Date(balanceAsOf).getUTCFullYear();
+    const accruedOwedCents = amountOwedToDateCents(
+      sub,
+      balanceAsOf,
+      sub.membershipCategory,
+      feeYear
     );
+    const priorArrearsCentsValue = priorArrearsCents(snapshot);
+    const qualifyingOwedCents =
+      snapshot.qualifyingReminderOwedCents != null
+        ? Number(snapshot.qualifyingReminderOwedCents)
+        : qualifyingReminderOwedCents(
+            snapshot,
+            balanceAsOf,
+            sub.membershipCategory,
+            feeYear,
+            sub
+          );
     const snapshotArrears = centsToEuro(snapshot.net1400ArrearsCents);
     const lastPaymentAmount =
       centsToEuro(summary?.lastPayment?.amount) ??
@@ -458,10 +450,11 @@ async function listReminderBatchMembers(req, batchId, query) {
       paymentType: sub.paymentType || null,
       membershipStatus: sub.subscriptionStatus || "—",
       joiningDate: sub.startDate || profile.joiningDate || profile.createdAt || null,
-      outstandingBalance,
+      outstandingBalance: centsToEuro(snapshot.netOutstandingAfterCreditCents) ?? 0,
       arrears:
         snapshotArrears == null ? arrearsFromSummary(summary) : Math.max(0, snapshotArrears),
-      amountOwedToDate: outstandingBalance || summaryAmountOwed || proRatedAmountOwed || 0,
+      amountOwedToDate: centsToEuro(accruedOwedCents) ?? 0,
+      qualifyingReminderOwed: centsToEuro(qualifyingOwedCents) ?? 0,
       lastPaymentAmount,
       lastPaymentDate: summary?.lastPayment?.date || snapshot.lastReceiptGlDate || null,
       workLocation:
@@ -671,12 +664,29 @@ async function processBuildSubscriptionChunk({
   for (const { sub, profile, memberId } of memberRows) {
     const snap = snapByMember.get(memberId) || {};
     const feeExpectedCents = getExpectedAnnualFeeCents(sub.membershipCategory);
+    const accruedOwedCents = amountOwedToDateCents(
+      sub,
+      asOf,
+      sub.membershipCategory,
+      proRataCalendarYear
+    );
+    const priorArrearsCentsValue = priorArrearsCents(snap);
+    const qualifyingOwedCents = qualifyingReminderOwedCents(
+      snap,
+      asOf,
+      sub.membershipCategory,
+      proRataCalendarYear,
+      sub
+    );
     const eligibilitySnapshot = {
       ...snap,
       ruleVersion: REMINDER_BATCH_RULE_VERSION_DEFAULT,
       feeExpectedCents: feeExpectedCents || null,
       feeProRataCalendarYear: proRataCalendarYear,
       feeProRataYearDayCount: proRataYearDayCount,
+      amountOwedToDateCents: accruedOwedCents,
+      priorArrearsCents: priorArrearsCentsValue,
+      qualifyingReminderOwedCents: qualifyingOwedCents,
       profileSnapshot: profileSnapshot(profile),
       reminderMinBalanceCents: getReminderMinBalanceCentsForCalendarYear(
         sub.membershipCategory,

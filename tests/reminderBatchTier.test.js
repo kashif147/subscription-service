@@ -11,6 +11,8 @@ const {
   paymentAfterPreviousBatch,
   highestReminderStep,
   reminderFieldToStepBack,
+  amountOwedToDateCents,
+  qualifyingReminderOwedCents,
 } = require("../helpers/reminderBatchTier");
 const { REMINDER_BATCH_KIND, REMINDER_BATCH_EXCLUSION_REASON } = require("../constants/enums");
 
@@ -18,51 +20,87 @@ describe("isFinanciallyDelinquent", () => {
   const asOf = new Date("2026-06-01T12:00:00.000Z");
   const category = "FULL_TIME"; // €540/yr → ~€133 min at 90 days
 
-  it("returns false when 1400 balance is below pro-rata minimum", () => {
-    const snap = {
-      net1400ArrearsCents: 5000,
-      net1400CurrentCents: 0,
-      lastReceiptGlDate: "2026-05-01T00:00:00.000Z",
-    };
-    assert.equal(isFinanciallyDelinquent(snap, asOf, category, 2026), false);
+  it("returns false when accrued + arrears is below the 90-day minimum", () => {
+    const snap = { net1400ArrearsCents: 5000, net1400CurrentCents: 0 };
+    const sub = { startDate: "2026-05-31", membershipCategory: category };
+    assert.equal(
+      isFinanciallyDelinquent(snap, asOf, category, 2026, sub),
+      false
+    );
   });
 
-  it("returns true when balance meets minimum even if last receipt is recent", () => {
+  it("returns false for a new member with only a few days accrued and no arrears", () => {
+    const snap = {
+      net1400ArrearsCents: 0,
+      net1400CurrentCents: 540_00,
+      availableCreditCents: 160_00,
+    };
+    const sub = { startDate: "2026-05-31", membershipCategory: category };
+    assert.equal(
+      isFinanciallyDelinquent(snap, asOf, category, 2026, sub),
+      false
+    );
+  });
+
+  it("returns true when prior arrears alone meets the minimum", () => {
     const snap = {
       net1400ArrearsCents: 200_00,
       net1400CurrentCents: 0,
       lastReceiptGlDate: "2026-05-30T00:00:00.000Z",
     };
-    assert.equal(isFinanciallyDelinquent(snap, asOf, category, 2026), true);
+    const sub = { startDate: "2026-05-31", membershipCategory: category };
+    assert.equal(
+      isFinanciallyDelinquent(snap, asOf, category, 2026, sub),
+      true
+    );
   });
 
-  it("returns true when balance meets minimum and there is no receipt", () => {
+  it("returns true when subscription accrual since year start meets the minimum", () => {
     const snap = {
-      net1400ArrearsCents: 540_00,
+      net1400ArrearsCents: 0,
       net1400CurrentCents: 0,
       lastReceiptGlDate: null,
     };
-    assert.equal(isFinanciallyDelinquent(snap, asOf, category, 2026), true);
+    const sub = { startDate: "2026-01-01", membershipCategory: category };
+    assert.equal(
+      isFinanciallyDelinquent(snap, asOf, category, 2026, sub),
+      true
+    );
   });
 
-  it("returns false when available credit makes the member a creditor", () => {
+  it("returns true when accrual plus arrears exceeds the 90-day minimum", () => {
     const snap = {
-      net1400ArrearsCents: 1_79,
+      net1400ArrearsCents: 90_00,
       net1400CurrentCents: 0,
-      availableCreditCents: 81_50,
-      lastReceiptGlDate: "2026-06-01T00:00:00.000Z",
-    };
-    assert.equal(isFinanciallyDelinquent(snap, asOf, category, 2026), false);
-  });
-
-  it("returns true when credit-adjusted debt still exceeds the 90-day minimum", () => {
-    const snap = {
-      net1400ArrearsCents: 240_00,
-      net1400CurrentCents: 0,
-      availableCreditCents: 90_00,
       lastReceiptGlDate: null,
     };
-    assert.equal(isFinanciallyDelinquent(snap, asOf, category, 2026), true);
+    const sub = { startDate: "2026-01-01", membershipCategory: category };
+    assert.equal(
+      isFinanciallyDelinquent(snap, asOf, category, 2026, sub),
+      true
+    );
+  });
+});
+
+describe("amountOwedToDateCents", () => {
+  it("counts inclusive days from subscription start through asOf", () => {
+    const sub = { startDate: "2026-05-31", membershipCategory: "FULL_TIME" };
+    const asOf = new Date("2026-06-01T12:00:00.000Z");
+    const owed = amountOwedToDateCents(sub, asOf, "FULL_TIME", 2026);
+    // 2 days × (54000 / 365) ≈ 296 cents
+    assert.equal(owed, 296);
+  });
+});
+
+describe("qualifyingReminderOwedCents", () => {
+  it("sums accrued subscription fee and prior arrears", () => {
+    const sub = { startDate: "2026-05-31", membershipCategory: "FULL_TIME" };
+    const snap = { net1400ArrearsCents: 10_00 };
+    const asOf = new Date("2026-06-01T12:00:00.000Z");
+    assert.equal(
+      qualifyingReminderOwedCents(snap, asOf, "FULL_TIME", 2026, sub),
+      1296
+    );
   });
 });
 
@@ -70,14 +108,15 @@ describe("classifyMaxReminderTier", () => {
   const asOf = new Date("2026-06-01T12:00:00.000Z");
   const anchor = new Date("2026-05-01T12:00:00.000Z");
   const snap = {
-    net1400ArrearsCents: 540_00,
+    net1400ArrearsCents: 0,
     net1400CurrentCents: 0,
     lastReceiptGlDate: null,
   };
+  const sub = { startDate: "2026-01-01", membershipCategory: "FULL_TIME" };
 
   it("assigns R1 when no reminders sent", () => {
     assert.equal(
-      classifyMaxReminderTier({}, snap, asOf, anchor, 2026),
+      classifyMaxReminderTier(sub, snap, asOf, anchor, 2026),
       "R1"
     );
   });
@@ -89,7 +128,7 @@ describe("classifyMaxReminderTier", () => {
     };
     assert.equal(
       classifyMaxReminderTier(
-        { reminders: { reminder1At: null } },
+        { reminders: { reminder1At: null }, startDate: "2026-01-01", membershipCategory: "FULL_TIME" },
         paidSnap,
         asOf,
         anchor,
@@ -107,7 +146,7 @@ describe("resolveBatchExclusionReason", () => {
   it("maps payment after batch to PAYMENT_IN_WINDOW", () => {
     assert.equal(
       resolveBatchExclusionReason(
-        {},
+        { membershipCategory: "FULL_TIME", startDate: "2026-01-01" },
         {
           net1400ArrearsCents: 540_00,
           net1400CurrentCents: 0,
@@ -122,10 +161,10 @@ describe("resolveBatchExclusionReason", () => {
     );
   });
 
-  it("maps low balance to NOT_DELINQUENT", () => {
+  it("maps low qualifying balance to NOT_DELINQUENT", () => {
     assert.equal(
       resolveBatchExclusionReason(
-        { membershipCategory: "FULL_TIME" },
+        { membershipCategory: "FULL_TIME", startDate: "2026-05-31" },
         { net1400ArrearsCents: 100, net1400CurrentCents: 0 },
         asOf,
         anchor,

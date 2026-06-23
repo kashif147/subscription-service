@@ -42,7 +42,8 @@ async function clearRemindersIfSettled(sub, snap, options = {}) {
       snap,
       asOf,
       sub.membershipCategory,
-      proRataCalendarYear
+      proRataCalendarYear,
+      sub
     )
   ) {
     return false;
@@ -99,7 +100,8 @@ async function stepBackRemindersIfPartialPayment(sub, snap, options = {}) {
       snap,
       asOf,
       sub.membershipCategory,
-      proRataCalendarYear
+      proRataCalendarYear,
+      sub
     )
   ) {
     return false;

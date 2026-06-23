@@ -73,6 +73,76 @@ function net1400OwedCents(snap) {
 }
 
 /**
+ * Inclusive UTC calendar days from `fromDate` through `toDate` (same day = 1).
+ * @returns {number}
+ */
+function inclusiveCalendarDaysBetweenUtc(fromDate, toDate) {
+  const a = fromDate instanceof Date ? fromDate : new Date(fromDate);
+  const b = toDate instanceof Date ? toDate : new Date(toDate);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return 0;
+  const startMs = Date.UTC(a.getUTCFullYear(), a.getUTCMonth(), a.getUTCDate());
+  const endMs = Date.UTC(b.getUTCFullYear(), b.getUTCMonth(), b.getUTCDate());
+  if (endMs < startMs) return 0;
+  return Math.floor((endMs - startMs) / 86400000) + 1;
+}
+
+/**
+ * Pro-rated subscription fee accrued from current subscription start through `asOf`
+ * (inclusive days × annual fee ÷ days in the fee calendar year).
+ * @param {object|null|undefined} subLean
+ * @param {Date|string} asOf
+ * @param {string|null|undefined} membershipCategory
+ * @param {number} [proRataCalendarYear]
+ * @returns {number} cents
+ */
+function amountOwedToDateCents(subLean, asOf, membershipCategory, proRataCalendarYear) {
+  const category = subLean?.membershipCategory || membershipCategory;
+  const feeCents = getExpectedAnnualFeeCents(category);
+  if (!feeCents) return 0;
+
+  const startDate = subLean?.startDate;
+  if (!startDate) return 0;
+
+  const asOfDate = asOf instanceof Date ? asOf : new Date(asOf);
+  if (Number.isNaN(asOfDate.getTime())) return 0;
+
+  const year = Number.isFinite(proRataCalendarYear)
+    ? proRataCalendarYear
+    : asOfDate.getUTCFullYear();
+  const yearDays = daysInCalendarYear(year);
+  const inclusiveDays = inclusiveCalendarDaysBetweenUtc(startDate, asOfDate);
+  if (inclusiveDays <= 0) return 0;
+
+  return Math.max(0, Math.round((feeCents / yearDays) * inclusiveDays));
+}
+
+/** Prior-year / carried 1400 arrears only (positive = member owes). */
+function priorArrearsCents(snap) {
+  return Math.max(0, Number(snap?.net1400ArrearsCents) || 0);
+}
+
+/**
+ * Total obligation used for reminder-batch inclusion:
+ * accrued fee since subscription start + prior arrears.
+ * @param {object|null|undefined} subLean
+ */
+function qualifyingReminderOwedCents(
+  snap,
+  asOf,
+  membershipCategory,
+  proRataCalendarYear,
+  subLean = null
+) {
+  const accrued = amountOwedToDateCents(
+    subLean,
+    asOf,
+    membershipCategory,
+    proRataCalendarYear
+  );
+  return accrued + priorArrearsCents(snap);
+}
+
+/**
  * Pro-rata min 1400 (cents) for a **calendar year** (365 or 366 days in that year).
  * Unknown category (no fee in map) falls back to {@link REMINDER_BATCH_MIN_BALANCE_CENTS}.
  * @param {string|null|undefined} membershipCategory
@@ -99,17 +169,20 @@ function getReminderMinBalanceCents(membershipCategory) {
 }
 
 /**
- * Delinquent when net 1400 (arrears + current) is at least the pro-rata minimum (~90 days of
- * annual fee). Receipt age alone does not clear delinquency while balance remains above the
- * threshold — that prevents small payments from dropping members off reminder batches.
+ * Delinquent when (amount owed to date from subscription start + prior arrears) is at least
+ * the pro-rata minimum (~90 days of annual fee). Payments and advance credit are not part of
+ * this gate — a new member with only a few days accrued stays excluded even if GL current
+ * balance was invoiced for the full year.
  *
- * @param {number} [proRataCalendarYear] - if set, min balance uses this year (e.g. batch run year); else `new Date()`.
+ * @param {number} [proRataCalendarYear] - fee year for daily rate and minimum threshold
+ * @param {object|null|undefined} [subLean] - current subscription (`startDate`, `membershipCategory`)
  */
 function isFinanciallyDelinquent(
   snap,
   asOf,
   membershipCategory,
-  proRataCalendarYear
+  proRataCalendarYear,
+  subLean = null
 ) {
   const minCents = Number.isFinite(proRataCalendarYear)
     ? getReminderMinBalanceCentsForCalendarYear(
@@ -117,7 +190,15 @@ function isFinanciallyDelinquent(
         proRataCalendarYear
       )
     : getReminderMinBalanceCents(membershipCategory);
-  return net1400OwedCents(snap) >= minCents;
+  return (
+    qualifyingReminderOwedCents(
+      snap,
+      asOf,
+      membershipCategory,
+      proRataCalendarYear,
+      subLean
+    ) >= minCents
+  );
 }
 
 /**
@@ -145,7 +226,8 @@ function resolveBatchExclusionReason(
       snap,
       asOf,
       subLean?.membershipCategory,
-      proRataCalendarYear
+      proRataCalendarYear,
+      subLean
     )
   ) {
     return REMINDER_BATCH_EXCLUSION_REASON.NOT_DELINQUENT;
@@ -212,7 +294,8 @@ function classifyMaxReminderTier(
       snap,
       a,
       subLean?.membershipCategory,
-      proRataCalendarYear
+      proRataCalendarYear,
+      subLean
     )
   ) {
     return null;
@@ -250,7 +333,8 @@ function classifyCancellationTier(
       snap,
       a,
       subLean?.membershipCategory,
-      proRataCalendarYear
+      proRataCalendarYear,
+      subLean
     )
   ) {
     return null;
@@ -278,5 +362,9 @@ module.exports = {
   getReminderMinBalanceCents,
   getReminderMinBalanceCentsForCalendarYear,
   net1400OwedCents,
+  inclusiveCalendarDaysBetweenUtc,
+  amountOwedToDateCents,
+  priorArrearsCents,
+  qualifyingReminderOwedCents,
   paymentAfterPreviousBatch,
 };
