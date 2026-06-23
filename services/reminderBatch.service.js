@@ -503,6 +503,7 @@ async function beginBuildReminderBatch(batchId, tenantId, req) {
 
   batch.status = REMINDER_BATCH_STATUS.PENDING_BUILD;
   batch.buildStartedAt = new Date();
+  batch.buildCompletedAt = null;
   batch.error = null;
   batch.updatedBy = await resolveCrmUserObjectId(req);
   const totalEst = await Subscription.countDocuments({
@@ -1109,6 +1110,7 @@ async function markReminderBatchBuildQueued(batchId, tenantId, req) {
 
   batch.status = REMINDER_BATCH_STATUS.PENDING_BUILD;
   batch.buildStartedAt = new Date();
+  batch.buildCompletedAt = null;
   batch.error = null;
   batch.updatedBy = await resolveCrmUserObjectId(req);
   batch.buildProgress = {
