@@ -176,6 +176,39 @@ describe("resolveBatchExclusionReason", () => {
   });
 });
 
+describe("buildMemberInclusionSummary", () => {
+  const asOf = new Date("2026-06-01T12:00:00.000Z");
+  const anchor = new Date("2026-05-01T12:00:00.000Z");
+  const { buildMemberInclusionSummary } = require("../helpers/reminderBatchTier");
+
+  it("describes included R1 member", () => {
+    const summary = buildMemberInclusionSummary({
+      batchKind: REMINDER_BATCH_KIND.REMINDER,
+      subLean: { startDate: "2026-01-01", membershipCategory: "FULL_TIME" },
+      snap: { net1400ArrearsCents: 0, net1400CurrentCents: 0 },
+      asOf,
+      previousExecuteCompletedAt: anchor,
+      proRataCalendarYear: 2026,
+      tier: "R1",
+    });
+    assert.match(summary, /Included for Reminder 1/);
+    assert.match(summary, /Qualifying balance/);
+  });
+
+  it("describes NOT_DELINQUENT exclusion", () => {
+    const summary = buildMemberInclusionSummary({
+      batchKind: REMINDER_BATCH_KIND.REMINDER,
+      subLean: { startDate: "2026-05-31", membershipCategory: "FULL_TIME" },
+      snap: { net1400ArrearsCents: 100, net1400CurrentCents: 0 },
+      asOf,
+      previousExecuteCompletedAt: anchor,
+      proRataCalendarYear: 2026,
+      tier: null,
+    });
+    assert.match(summary, /Excluded: qualifying balance is below/);
+  });
+});
+
 describe("paymentAfterPreviousBatch", () => {
   it("detects receipt after batch execute", () => {
     assert.equal(

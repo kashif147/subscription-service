@@ -347,6 +347,170 @@ function classifyCancellationTier(
   return null;
 }
 
+function formatEurosFromCents(cents) {
+  const n = Number(cents);
+  if (!Number.isFinite(n)) return "€0.00";
+  return `€${(n / 100).toLocaleString("en-IE", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function formatSummaryDate(value) {
+  if (value == null) return null;
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Human-readable audit text for why a member was included or excluded.
+ * @param {object} params
+ * @param {string} params.batchKind
+ * @param {object} params.subLean
+ * @param {object} params.snap
+ * @param {Date|string} params.asOf
+ * @param {Date|string|null|undefined} params.previousExecuteCompletedAt
+ * @param {number} params.proRataCalendarYear
+ * @param {string|null} params.tier - assigned tier when included
+ * @returns {string}
+ */
+function buildMemberInclusionSummary({
+  batchKind,
+  subLean,
+  snap,
+  asOf,
+  previousExecuteCompletedAt,
+  proRataCalendarYear,
+  tier,
+}) {
+  const category = subLean?.membershipCategory || "unknown category";
+  const asOfDate = asOf instanceof Date ? asOf : new Date(asOf);
+  const minCents = getReminderMinBalanceCentsForCalendarYear(
+    category,
+    proRataCalendarYear
+  );
+  const accruedCents = amountOwedToDateCents(
+    subLean,
+    asOfDate,
+    category,
+    proRataCalendarYear
+  );
+  const arrearsCents = priorArrearsCents(snap);
+  const qualifyingCents = qualifyingReminderOwedCents(
+    snap,
+    asOfDate,
+    category,
+    proRataCalendarYear,
+    subLean
+  );
+  const anchor = reminderTierAnchorDate(previousExecuteCompletedAt);
+  const st = remindersState(subLean);
+  const r1At = st.reminder1At ? formatSummaryDate(st.reminder1At) : null;
+  const r2At = st.reminder2At ? formatSummaryDate(st.reminder2At) : null;
+  const r3At = st.reminder3At ? formatSummaryDate(st.reminder3At) : null;
+  const lastReceipt = formatSummaryDate(snap?.lastReceiptGlDate);
+  const balanceDate = formatSummaryDate(asOfDate);
+  const anchorLabel = anchor ? formatSummaryDate(anchor) : null;
+
+  const balanceLine = `Qualifying balance ${formatEurosFromCents(
+    qualifyingCents
+  )} (subscription accrual ${formatEurosFromCents(
+    accruedCents
+  )} + prior arrears ${formatEurosFromCents(
+    arrearsCents
+  )}) vs minimum ${formatEurosFromCents(minCents)} (~90-day pro-rata fee for ${category}).`;
+
+  if (tier) {
+    const tierLabels = {
+      [REMINDER_BATCH_TIER.R1]: "Reminder 1",
+      [REMINDER_BATCH_TIER.R2]: "Reminder 2",
+      [REMINDER_BATCH_TIER.R3]: "Reminder 3",
+      [REMINDER_BATCH_TIER.CANCEL]: "Cancellation",
+    };
+    const label = tierLabels[tier] || tier;
+    let tierDetail = "";
+    if (tier === REMINDER_BATCH_TIER.R1) {
+      tierDetail =
+        "No reminder flags are set on the subscription, so this is the first reminder step.";
+    } else if (tier === REMINDER_BATCH_TIER.R2) {
+      tierDetail = `Reminder 1 was sent on ${r1At}. Previous batch in this calendar year completed on ${anchorLabel}; Reminder 1 predates that date.`;
+    } else if (tier === REMINDER_BATCH_TIER.R3) {
+      tierDetail = `Reminder 2 was sent on ${r2At}. Previous batch completed on ${anchorLabel}; Reminder 2 predates that date.`;
+    } else if (tier === REMINDER_BATCH_TIER.CANCEL) {
+      tierDetail = `Reminder 3 was sent on ${r3At}. Previous batch completed on ${
+        anchorLabel || "n/a"
+      }; member is eligible for cancellation notice.`;
+    }
+    return `Included for ${label} on ${balanceDate}. ${balanceLine} ${tierDetail}`;
+  }
+
+  if (
+    paymentAfterPreviousBatch(snap?.lastReceiptGlDate, previousExecuteCompletedAt)
+  ) {
+    return `Excluded: payment received on ${lastReceipt} after the previous batch completed on ${anchorLabel}. ${balanceLine}`;
+  }
+
+  if (
+    !isFinanciallyDelinquent(
+      snap,
+      asOfDate,
+      category,
+      proRataCalendarYear,
+      subLean
+    )
+  ) {
+    const subStart = formatSummaryDate(subLean?.startDate);
+    return `Excluded: qualifying balance is below the delinquency threshold. ${balanceLine}${
+      subStart ? ` Subscription started ${subStart}.` : ""
+    }`;
+  }
+
+  if (batchKind === REMINDER_BATCH_KIND.REMINDER && r3At) {
+    return `Excluded from reminder batch: Reminder 3 was already sent on ${r3At}. Member belongs on the cancellation batch instead. ${balanceLine}`;
+  }
+
+  if (batchKind === REMINDER_BATCH_KIND.CANCELLATION && !r3At) {
+    return `Excluded from cancellation batch: Reminder 3 has not been sent yet (R1=${r1At || "none"}, R2=${
+      r2At || "none"
+    }). ${balanceLine}`;
+  }
+
+  if (batchKind === REMINDER_BATCH_KIND.CANCELLATION && r3At) {
+    if (anchor && r3At >= anchorLabel) {
+      return `Excluded from cancellation batch: Reminder 3 on ${r3At} is not before the previous batch completion on ${anchorLabel}. ${balanceLine}`;
+    }
+  }
+
+  if (batchKind === REMINDER_BATCH_KIND.REMINDER && r2At && !r3At) {
+    if (!anchorLabel) {
+      return `Excluded: Reminder 2 was sent on ${r2At}; Reminder 3 requires a completed prior batch in this calendar year (none found yet). ${balanceLine}`;
+    }
+    if (r2At >= anchorLabel) {
+      return `Excluded: Reminder 2 was sent on ${r2At}; not yet eligible for Reminder 3 because it is not before the previous batch completion on ${anchorLabel}. ${balanceLine}`;
+    }
+  }
+
+  if (batchKind === REMINDER_BATCH_KIND.REMINDER && r1At && !r2At) {
+    if (!anchorLabel) {
+      return `Excluded: Reminder 1 was sent on ${r1At}; Reminder 2 requires a completed prior batch in this calendar year (none found yet). ${balanceLine}`;
+    }
+    if (r1At >= anchorLabel) {
+      return `Excluded: Reminder 1 was sent on ${r1At}; not yet eligible for Reminder 2 because it is not before the previous batch completion on ${anchorLabel}. ${balanceLine}`;
+    }
+  }
+
+  if (batchKind === REMINDER_BATCH_KIND.REMINDER && r1At && r2At && !r3At) {
+    return `Excluded: reminders R1 (${r1At}) and R2 (${r2At}) are set but Reminder 3 tier could not be assigned. ${balanceLine} Previous batch anchor: ${
+      anchorLabel || "none this year"
+    }.`;
+  }
+
+  return `Excluded: tier could not be assigned for this batch kind. ${balanceLine} Reminder flags: R1=${
+    r1At || "none"
+  }, R2=${r2At || "none"}, R3=${r3At || "none"}.`;
+}
+
 module.exports = {
   reminderTierAnchorDate,
   calendarDaysBetween,
@@ -367,4 +531,5 @@ module.exports = {
   priorArrearsCents,
   qualifyingReminderOwedCents,
   paymentAfterPreviousBatch,
+  buildMemberInclusionSummary,
 };

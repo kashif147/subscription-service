@@ -35,6 +35,11 @@ const ReminderBatchMemberSchema = new mongoose.Schema(
       default: null,
       trim: true,
     },
+    inclusionSummary: {
+      type: String,
+      default: null,
+      trim: true,
+    },
     eligibilitySnapshot: {
       type: mongoose.Schema.Types.Mixed,
       default: {},

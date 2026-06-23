@@ -36,6 +36,7 @@ const {
   amountOwedToDateCents,
   priorArrearsCents,
   qualifyingReminderOwedCents,
+  buildMemberInclusionSummary,
 } = require("../helpers/reminderBatchTier");
 const {
   clearRemindersIfSettled,
@@ -470,6 +471,9 @@ async function listReminderBatchMembers(req, batchId, query) {
       membershipFee: snapshot.feeExpectedCents
         ? snapshot.feeExpectedCents / 100
         : null,
+      inclusionSummary: row.inclusionSummary || null,
+      exclusionReason: row.exclusionReason || null,
+      included: row.included !== false,
     };
   });
   return { items: enriched, total, page: p, limit: l };
@@ -726,6 +730,15 @@ async function processBuildSubscriptionChunk({
         proRataCalendarYear,
         batchDoc.kind
       );
+      const inclusionSummary = buildMemberInclusionSummary({
+        batchKind: batchDoc.kind,
+        subLean: sub,
+        snap,
+        asOf,
+        previousExecuteCompletedAt: prevExecuteAt,
+        proRataCalendarYear,
+        tier: null,
+      });
       if (
         exclusionReason === REMINDER_BATCH_EXCLUSION_REASON.NOT_DELINQUENT
       ) {
@@ -744,9 +757,19 @@ async function processBuildSubscriptionChunk({
         membershipNumber: memberId,
         included: false,
         exclusionReason,
+        inclusionSummary,
         eligibilitySnapshot,
       });
     } else {
+      const inclusionSummary = buildMemberInclusionSummary({
+        batchKind: batchDoc.kind,
+        subLean: sub,
+        snap,
+        asOf,
+        previousExecuteCompletedAt: prevExecuteAt,
+        proRataCalendarYear,
+        tier,
+      });
       bulkDocs.push({
         tenantId,
         batchId: batchDoc._id,
@@ -757,6 +780,7 @@ async function processBuildSubscriptionChunk({
         membershipNumber: memberId,
         included: true,
         exclusionReason: null,
+        inclusionSummary,
         eligibilitySnapshot,
       });
     }
