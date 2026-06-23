@@ -1099,6 +1099,7 @@ async function markReminderBatchBuildQueued(batchId, tenantId, req) {
 
   const allowed = new Set([
     REMINDER_BATCH_STATUS.DRAFT,
+    REMINDER_BATCH_STATUS.READY,
     REMINDER_BATCH_STATUS.FAILED,
     REMINDER_BATCH_STATUS.PENDING_BUILD,
   ]);
@@ -1107,7 +1108,7 @@ async function markReminderBatchBuildQueued(batchId, tenantId, req) {
   }
 
   batch.status = REMINDER_BATCH_STATUS.PENDING_BUILD;
-  batch.buildStartedAt = batch.buildStartedAt || new Date();
+  batch.buildStartedAt = new Date();
   batch.error = null;
   batch.updatedBy = await resolveCrmUserObjectId(req);
   batch.buildProgress = {
