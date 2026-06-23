@@ -93,25 +93,22 @@ async function fetchProfilesByIds(profileIds, tenantId, req, options = {}) {
 
   try {
     const ids = profileIds.map((id) => id.toString());
-    const profileIdsQuery = ids.join(",");
     const batchUrl = `${PROFILE_SERVICE_URL}/api/profile/batch`;
-    const fullUrl = `${batchUrl}?profileIds=${encodeURIComponent(profileIdsQuery)}`;
 
     console.log(`[Gateway Aggregation] === Profile batch request ===`);
     console.log(`[Gateway Aggregation] PROFILE_SERVICE_URL: ${PROFILE_SERVICE_URL}`);
-    console.log(`[Gateway Aggregation] Request URL: ${fullUrl}`);
+    console.log(`[Gateway Aggregation] Request URL: ${batchUrl}`);
     console.log(`[Gateway Aggregation] profileIds count: ${ids.length}, tenantId: ${tenantId || req?.headers?.['x-tenant-id'] || 'none'}, relaxTenant: ${relaxTenant}`);
     console.log(`[Gateway Aggregation] profileIds (first 3): ${ids.slice(0, 3).join(', ')}${ids.length > 3 ? '...' : ''}`);
 
     const headers = buildServiceHeaders(req, tenantId);
-    const params = { profileIds: profileIdsQuery };
-    if (relaxTenant) {
-      params.relaxTenant = "true";
-    }
-    const response = await axios.get(batchUrl, {
-        params,
+    const response = await axios.post(
+      batchUrl,
+      { profileIds: ids },
+      {
         headers,
         timeout: 5000,
+        params: relaxTenant ? { relaxTenant: "true" } : undefined,
       }
     );
 
