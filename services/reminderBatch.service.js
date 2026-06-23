@@ -20,6 +20,7 @@ const {
 } = require("../constants/reminderBatch.constants");
 const {
   fetchProfilesByIds,
+  fetchProfilesByMembershipNumbers,
   fetchReminderEligibilityBulk,
   fetchMemberSummariesByMemberIds,
   createInternalWorkerReq,
@@ -54,6 +55,36 @@ const CHUNK = REMINDER_BATCH_BUILD_EXECUTE_CHUNK_SIZE;
 function centsToEuro(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n / 100 : null;
+}
+
+function dayOfYearUtc(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(d.getTime())) return null;
+  const start = Date.UTC(d.getUTCFullYear(), 0, 1);
+  return Math.floor((Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - start) / 86400000) + 1;
+}
+
+function proRatedAmountOwedToDateCents(snapshot = {}, sub = {}) {
+  const feeCents =
+    Number(snapshot.feeExpectedCents) || getExpectedAnnualFeeCents(sub.membershipCategory);
+  if (!feeCents) return 0;
+  const asOf = snapshot.balanceAsOf || new Date();
+  const d = dayOfYearUtc(asOf);
+  if (!d) return 0;
+  const year = new Date(asOf).getUTCFullYear();
+  return Math.min(feeCents, Math.max(0, Math.round((feeCents / daysInCalendarYear(year)) * d)));
+}
+
+function profileSnapshot(profile = {}) {
+  return {
+    _id: profile._id || null,
+    membershipNumber: profile.membershipNumber || null,
+    fullName: fullNameFromProfile(profile),
+    email: emailFromProfile(profile),
+    fullAddress: fullAddressFromProfile(profile),
+    contactInfo: contactInfoFromProfile(profile),
+    personalInfo: profile.personalInfo || profile.personalDetails || profile.personal || {},
+  };
 }
 
 function contactInfoFromProfile(profile = {}) {
@@ -352,12 +383,13 @@ async function listReminderBatchMembers(req, batchId, query) {
         .filter(Boolean)
     ),
   ];
-  const [profiles, subscriptions, summaries] = await Promise.all([
+  const [profiles, subscriptions, summaries, profilesByMembership] = await Promise.all([
     profileIds.length
       ? fetchProfilesByIds(
           profileIds.map((id) => new mongoose.Types.ObjectId(id)),
           req.tenantId,
-          req
+          req,
+          { relaxTenant: true }
         )
       : [],
     subscriptionIds.length
@@ -366,9 +398,18 @@ async function listReminderBatchMembers(req, batchId, query) {
     memberIds.length
       ? fetchMemberSummariesByMemberIds(memberIds, req.tenantId, req)
       : [],
+    memberIds.length
+      ? fetchProfilesByMembershipNumbers(memberIds, req.tenantId, req)
+      : [],
   ]);
   const profileById = new Map(
     (profiles || []).map((profile) => [String(profile._id), profile])
+  );
+  const profileByMembership = new Map(
+    (profilesByMembership || []).map((profile) => [
+      String(profile.membershipNumber || "").trim(),
+      profile,
+    ])
   );
   const subscriptionById = new Map(
     (subscriptions || []).map((sub) => [String(sub._id), sub])
@@ -378,19 +419,30 @@ async function listReminderBatchMembers(req, batchId, query) {
   );
 
   const enriched = items.map((row) => {
-    const profile = profileById.get(String(row.profileId)) || {};
-    const sub = subscriptionById.get(String(row.subscriptionId)) || {};
     const snapshot = row.eligibilitySnapshot || {};
+    const sub = subscriptionById.get(String(row.subscriptionId)) || {};
     const memberId = row.membershipNumber || row.memberId;
+    const profile =
+      profileById.get(String(row.profileId)) ||
+      profileByMembership.get(String(memberId || "").trim()) ||
+      snapshot.profileSnapshot ||
+      {};
     const summary = summaryByMemberId.get(String(memberId || "").trim()) || null;
-    const balanceCents =
-      Number(snapshot.gross1400OwedCents ?? snapshot.netOutstandingAfterCreditCents ??
-        (Number(snapshot.net1400ArrearsCents || 0) +
-          Number(snapshot.net1400CurrentCents || 0)));
+    const snapshotGrossOwedCents =
+      snapshot.gross1400OwedCents != null
+        ? Number(snapshot.gross1400OwedCents)
+        : Number(snapshot.net1400ArrearsCents || 0) +
+          Number(snapshot.net1400CurrentCents || 0);
+    const balanceCents = Number.isFinite(snapshotGrossOwedCents)
+      ? snapshotGrossOwedCents
+      : Number(snapshot.netOutstandingAfterCreditCents || 0);
     const outstandingBalance = Number.isFinite(balanceCents)
       ? balanceCents / 100
       : 0;
     const summaryAmountOwed = centsToEuro(summary?.outstandingBalance);
+    const proRatedAmountOwed = centsToEuro(
+      proRatedAmountOwedToDateCents(snapshot, sub)
+    );
     const snapshotArrears = centsToEuro(snapshot.net1400ArrearsCents);
     const lastPaymentAmount =
       centsToEuro(summary?.lastPayment?.amount) ??
@@ -409,7 +461,7 @@ async function listReminderBatchMembers(req, batchId, query) {
       outstandingBalance,
       arrears:
         snapshotArrears == null ? arrearsFromSummary(summary) : Math.max(0, snapshotArrears),
-      amountOwedToDate: summaryAmountOwed == null ? outstandingBalance : summaryAmountOwed,
+      amountOwedToDate: outstandingBalance || summaryAmountOwed || proRatedAmountOwed || 0,
       lastPaymentAmount,
       lastPaymentDate: summary?.lastPayment?.date || snapshot.lastReceiptGlDate || null,
       workLocation:
@@ -448,6 +500,7 @@ async function beginBuildReminderBatch(batchId, tenantId, req) {
 
   const allowed = new Set([
     REMINDER_BATCH_STATUS.DRAFT,
+    REMINDER_BATCH_STATUS.READY,
     REMINDER_BATCH_STATUS.FAILED,
     REMINDER_BATCH_STATUS.PENDING_BUILD,
   ]);
@@ -624,6 +677,7 @@ async function processBuildSubscriptionChunk({
       feeExpectedCents: feeExpectedCents || null,
       feeProRataCalendarYear: proRataCalendarYear,
       feeProRataYearDayCount: proRataYearDayCount,
+      profileSnapshot: profileSnapshot(profile),
       reminderMinBalanceCents: getReminderMinBalanceCentsForCalendarYear(
         sub.membershipCategory,
         proRataCalendarYear
