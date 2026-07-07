@@ -1,5 +1,6 @@
 const { MEMBERSHIP_EVENTS } = require("../events");
 const { consumer } = require("@projectShell/rabbitmq-middleware");
+const bizLogger = require("../../config/bizLogger.js");
 const {
   publishSubscriptionCurrentUpdated,
 } = require("../publishers/subscription.current.updated.publisher.js");
@@ -346,6 +347,19 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       movementResolvedAt: payloadMovementResolvedAt = null,
     } = data || {};
 
+    bizLogger.business("RabbitMQ subscription upsert consumed", {
+      eventType: payload?.eventType || MEMBERSHIP_EVENTS.SUBSCRIPTION_UPSERT_REQUESTED,
+      eventId: payload?.eventId || null,
+      correlationId: payload?.correlationId || null,
+      tenantId: tenantId || null,
+      profileId: profileId || null,
+      applicationId: applicationId || null,
+      membershipId: memberId || null,
+      exchange,
+      routingKey,
+      sourceService: payload?.sourceService || payload?.metadata?.service || null,
+    });
+
     const resolvedPayment = resolveNoFeePaymentFields({
       membershipCategory,
       paymentType,
@@ -496,6 +510,18 @@ async function handleSubscriptionUpsertRequested(payload, context) {
             { _id: existingForApp._id },
             { $set: update }
           );
+          bizLogger.business("RabbitMQ subscription upsert updated existing application row", {
+            eventType: payload?.eventType || MEMBERSHIP_EVENTS.SUBSCRIPTION_UPSERT_REQUESTED,
+            eventId: payload?.eventId || null,
+            correlationId: payload?.correlationId || null,
+            tenantId: tenantId || null,
+            profileId: profileIdObjectId.toString(),
+            applicationId: normalizedAppId,
+            membershipId: memberId || null,
+            subscriptionId: existingForApp._id?.toString?.() || String(existingForApp._id),
+            exchange,
+            routingKey,
+          });
           console.log(
             "✅ [SUBSCRIPTION_UPSERT_LISTENER] Subscription payment fields updated successfully"
           );
@@ -593,6 +619,18 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       }
       if (Object.keys(update).length > 0) {
         await Subscription.updateOne({ _id: profileCurrentSub._id }, { $set: update });
+        bizLogger.business("RabbitMQ subscription upsert updated current row", {
+          eventType: payload?.eventType || MEMBERSHIP_EVENTS.SUBSCRIPTION_UPSERT_REQUESTED,
+          eventId: payload?.eventId || null,
+          correlationId: payload?.correlationId || null,
+          tenantId: tenantId || null,
+          profileId: profileIdObjectId.toString(),
+          applicationId: normalizedAppId || null,
+          membershipId: memberId || null,
+          subscriptionId: profileCurrentSub._id?.toString?.() || String(profileCurrentSub._id),
+          exchange,
+          routingKey,
+        });
       }
       const subForEvent =
         (await Subscription.findById(profileCurrentSub._id).lean()) ||
@@ -764,6 +802,21 @@ async function handleSubscriptionUpsertRequested(payload, context) {
     let newSub;
     try {
       newSub = await Subscription.create(subscriptionData);
+      bizLogger.business("RabbitMQ subscription upsert created subscription", {
+        eventType: payload?.eventType || MEMBERSHIP_EVENTS.SUBSCRIPTION_UPSERT_REQUESTED,
+        eventId: payload?.eventId || null,
+        correlationId: payload?.correlationId || null,
+        tenantId: tenantId || null,
+        profileId: profileIdObjectId.toString(),
+        applicationId: applicationId || null,
+        membershipId: memberId || null,
+        subscriptionId: newSub._id.toString(),
+        subscriptionYear,
+        isCurrent: newSub.isCurrent,
+        subscriptionStatus: newSub.subscriptionStatus,
+        exchange,
+        routingKey,
+      });
       console.log(
         "✅ [SUBSCRIPTION_UPSERT_LISTENER] Subscription.create() succeeded"
       );
@@ -877,6 +930,19 @@ async function handleSubscriptionUpsertRequested(payload, context) {
         dateJoined: payload?.data?.dateJoined,
       },
     };
+
+    bizLogger.error("RabbitMQ subscription upsert handler failed", {
+      eventType: payload?.eventType || MEMBERSHIP_EVENTS.SUBSCRIPTION_UPSERT_REQUESTED,
+      eventId: payload?.eventId || null,
+      correlationId: payload?.correlationId || null,
+      tenantId: payload?.tenantId || null,
+      profileId: payload?.data?.profileId || null,
+      applicationId: payload?.data?.applicationId || null,
+      membershipId: payload?.data?.memberId || null,
+      exchange,
+      routingKey,
+      error: error.message,
+    });
 
     // Use multiple logging methods to ensure visibility
     console.error(
