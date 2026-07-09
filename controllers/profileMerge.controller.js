@@ -8,6 +8,17 @@ function toObjectId(value) {
   return new mongoose.Types.ObjectId(str);
 }
 
+function resolveProfileMergeSubscriptionPlan({ absorbedSubs, masterCurrent }) {
+  const absorbedCurrentIds = (Array.isArray(absorbedSubs) ? absorbedSubs : [])
+    .filter((sub) => sub?.isCurrent === true && sub?._id)
+    .map((sub) => sub._id);
+
+  return {
+    absorbedCurrentIds,
+    currentSubscriptionId: masterCurrent?._id || null,
+  };
+}
+
 async function mergeProfilesInternal(req, res, next) {
   try {
     const tenantId = req.tenantId || req.headers["x-tenant-id"] || null;
@@ -28,7 +39,10 @@ async function mergeProfilesInternal(req, res, next) {
       return next(AppError.badRequest("Cannot merge a profile with itself"));
     }
 
+    const tenantFilter = tenantId ? { tenantId } : {};
+
     const absorbedSubs = await Subscription.find({
+      ...tenantFilter,
       profileId: absorbedObjectId,
     }).lean();
 
@@ -42,38 +56,37 @@ async function mergeProfilesInternal(req, res, next) {
     }
 
     const masterCurrent = await Subscription.findOne({
+      ...tenantFilter,
       profileId: masterObjectId,
       isCurrent: true,
     }).lean();
 
-    const absorbedCurrent = absorbedSubs.find((sub) => sub.isCurrent === true) || null;
+    const plan = resolveProfileMergeSubscriptionPlan({
+      absorbedSubs,
+      masterCurrent,
+    });
 
-    const reassigned = await Subscription.updateMany(
-      { profileId: absorbedObjectId },
-      {
-        $set: {
-          profileId: masterObjectId,
-        },
-      },
-    );
-
-    if (masterCurrent && absorbedCurrent) {
-      await Subscription.updateOne(
-        { _id: absorbedCurrent._id },
+    let deactivatedCurrent = { modifiedCount: 0, matchedCount: 0 };
+    if (plan.absorbedCurrentIds.length > 0) {
+      deactivatedCurrent = await Subscription.updateMany(
+        { ...tenantFilter, _id: { $in: plan.absorbedCurrentIds } },
         { $set: { isCurrent: false } },
       );
     }
 
-    let currentSubscriptionId = masterCurrent?._id || absorbedCurrent?._id || null;
-    if (!masterCurrent && absorbedCurrent) {
-      currentSubscriptionId = absorbedCurrent._id;
+    if (masterCurrent) {
+      await Subscription.updateOne(
+        { ...tenantFilter, _id: masterCurrent._id },
+        { $set: { isCurrent: true } },
+      );
     }
 
     return res.success({
-      subscriptionsReassigned: reassigned.modifiedCount || 0,
-      subscriptionsMatched: reassigned.matchedCount || 0,
-      currentSubscriptionId: currentSubscriptionId
-        ? String(currentSubscriptionId)
+      subscriptionsReassigned: 0,
+      subscriptionsMatched: absorbedSubs.length,
+      subscriptionsMadeNonCurrent: deactivatedCurrent.modifiedCount || 0,
+      currentSubscriptionId: plan.currentSubscriptionId
+        ? String(plan.currentSubscriptionId)
         : null,
       masterMembershipNumber,
       absorbedMembershipNumber,
@@ -85,4 +98,5 @@ async function mergeProfilesInternal(req, res, next) {
 
 module.exports = {
   mergeProfilesInternal,
+  resolveProfileMergeSubscriptionPlan,
 };
