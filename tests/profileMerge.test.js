@@ -5,7 +5,7 @@ const {
 } = require("../controllers/profileMerge.controller");
 
 describe("resolveProfileMergeSubscriptionPlan", () => {
-  it("keeps the master current subscription and marks absorbed current rows non-current", () => {
+  it("keeps the master current subscription and closes only absorbed current rows", () => {
     const plan = resolveProfileMergeSubscriptionPlan({
       masterCurrent: { _id: "master-current" },
       absorbedSubs: [

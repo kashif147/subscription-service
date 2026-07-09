@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const Subscription = require("../models/subscription.model");
 const { AppError } = require("../errors/AppError");
+const { CANCELLATION_SOURCE } = require("../constants/enums");
 
 function toObjectId(value) {
   const str = String(value || "").trim();
@@ -65,12 +66,21 @@ async function mergeProfilesInternal(req, res, next) {
       absorbedSubs,
       masterCurrent,
     });
+    const mergedAt = new Date();
 
     let deactivatedCurrent = { modifiedCount: 0, matchedCount: 0 };
     if (plan.absorbedCurrentIds.length > 0) {
       deactivatedCurrent = await Subscription.updateMany(
         { ...tenantFilter, _id: { $in: plan.absorbedCurrentIds } },
-        { $set: { isCurrent: false } },
+        {
+          $set: {
+            isCurrent: false,
+            endDate: mergedAt,
+            "cancellation.source": CANCELLATION_SOURCE.MERGED,
+            "cancellation.dateCancelled": mergedAt,
+            "cancellation.reason": "Merged duplicated profile",
+          },
+        },
       );
     }
 
