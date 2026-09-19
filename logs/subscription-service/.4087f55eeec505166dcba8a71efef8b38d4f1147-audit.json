@@ -1,0 +1,15 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 14
+    },
+    "auditLog": "/Users/kashifurrehman/Documents/Personal/membership/projectShell/backend/subscription-service/logs/subscription-service/.4087f55eeec505166dcba8a71efef8b38d4f1147-audit.json",
+    "files": [
+        {
+            "date": 1783835945240,
+            "name": "/Users/kashifurrehman/Documents/Personal/membership/projectShell/backend/subscription-service/logs/subscription-service/app-2026-07-12.log",
+            "hash": "83cd39d2204a6100c9531754c5ff9158fc1684f5fa556fc5c46c7379ce06055a"
+        }
+    ],
+    "hashType": "sha256"
+}
