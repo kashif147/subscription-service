@@ -1,4 +1,19 @@
 const { validateGatewayRequest } = require("@membership/policy-middleware/security");
+const { tenantContextMiddleware } = require("@membership/policy-middleware");
+
+/**
+ * Phase 1A canonical tenant-context guard — WARN MODE ONLY (non-blocking).
+ *
+ * Runs AFTER `ensureAuthenticated`, observing the tenant already established on
+ * req.ctx/req.user/req.tenantId by one of the two VERIFIED auth paths (gateway
+ * `validateGatewayRequest`, or legacy Bearer `jwt.verify`). In "warn" mode it
+ * re-pins req.tenantId to that trusted tenant and LOGS any caller-supplied
+ * (body/query/params) tenantId that disagrees, as a non-blocking
+ * TenantContextMismatch event — it never returns 403. Do NOT mount it on the
+ * S2S `ensureAuthenticatedOrInternal` routes (their internal branch trusts a
+ * forwarded x-tenant-id header without authentication) — those are Phase 1D.
+ */
+const tenantContextWarn = tenantContextMiddleware({ mode: "warn" });
 
 const ensureAuthenticated = (req, res, next) => {
   // Check for gateway-verified JWT (trust gateway headers with validation)
@@ -131,4 +146,18 @@ const ensureAuthenticatedOrInternal = (req, res, next) => {
   return ensureAuthenticated(req, res, next);
 };
 
-module.exports = { ensureAuthenticated, ensureAuthenticatedOrInternal };
+/**
+ * Smallest composed authenticated chain for adopting the WARN guard:
+ *   router.get("/x", ...ensureAuthenticatedWithTenantContext, controller)
+ * Guarantees ordering: authenticate -> tenantContextWarn -> permission/controller.
+ * Use ONLY on normal authenticated routes — never on the S2S
+ * `ensureAuthenticatedOrInternal` routes.
+ */
+const ensureAuthenticatedWithTenantContext = [ensureAuthenticated, tenantContextWarn];
+
+module.exports = {
+  ensureAuthenticated,
+  ensureAuthenticatedOrInternal,
+  tenantContextWarn,
+  ensureAuthenticatedWithTenantContext,
+};

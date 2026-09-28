@@ -1,19 +1,19 @@
 const express = require("express");
 const router = express.Router();
-const { ensureAuthenticated } = require("../middlewares/auth.mw");
+const { ensureAuthenticatedWithTenantContext } = require("../middlewares/auth.mw");
 const reminderBatch = require("../controllers/reminderBatch.controller");
 
-router.post("/", ensureAuthenticated, reminderBatch.postCreate);
+router.post("/", ...ensureAuthenticatedWithTenantContext, reminderBatch.postCreate);
 router.post(
   "/monthly-orchestrate",
-  ensureAuthenticated,
+  ...ensureAuthenticatedWithTenantContext,
   reminderBatch.postMonthlyOrchestrate
 );
-router.get("/", ensureAuthenticated, reminderBatch.getList);
-router.get("/:batchId/members", ensureAuthenticated, reminderBatch.getMembers);
-router.post("/:batchId/build", ensureAuthenticated, reminderBatch.postBuild);
-router.post("/:batchId/execute", ensureAuthenticated, reminderBatch.postExecute);
-router.delete("/:batchId", ensureAuthenticated, reminderBatch.deleteDraft);
-router.get("/:batchId", ensureAuthenticated, reminderBatch.getOne);
+router.get("/", ...ensureAuthenticatedWithTenantContext, reminderBatch.getList);
+router.get("/:batchId/members", ...ensureAuthenticatedWithTenantContext, reminderBatch.getMembers);
+router.post("/:batchId/build", ...ensureAuthenticatedWithTenantContext, reminderBatch.postBuild);
+router.post("/:batchId/execute", ...ensureAuthenticatedWithTenantContext, reminderBatch.postExecute);
+router.delete("/:batchId", ...ensureAuthenticatedWithTenantContext, reminderBatch.deleteDraft);
+router.get("/:batchId", ...ensureAuthenticatedWithTenantContext, reminderBatch.getOne);
 
 module.exports = router;
