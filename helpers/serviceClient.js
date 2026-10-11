@@ -200,12 +200,17 @@ async function fetchMemberSummariesByMemberIds(memberIds, tenantId, req) {
   ];
   const headers = buildAccountServiceRequestHeaders(req, tenantId);
   const now = Date.now();
+  // Cache per tenant + member: the key is the tenant actually sent to account-service,
+  // so one tenant's balances are never served to another. No real tenant -> no caching.
+  const cacheTenant = String(headers["x-tenant-id"] || "").trim();
+  const useCache = Boolean(cacheTenant) && cacheTenant !== "default";
+  const cacheKey = (memberId) => `${cacheTenant}::${memberId}`;
 
   const out = [];
   const pendingIds = [];
 
   uniqueMemberIds.forEach((memberId) => {
-    const cached = memberSummaryCache.get(memberId);
+    const cached = useCache ? memberSummaryCache.get(cacheKey(memberId)) : null;
     if (cached && now - cached.at < MEMBER_SUMMARY_CACHE_TTL_MS) {
       out.push({ memberId, summary: cached.data });
       return;
@@ -265,7 +270,7 @@ async function fetchMemberSummariesByMemberIds(memberIds, tenantId, req) {
     pendingIds.forEach((memberId) => {
       const variants = variantMap.get(memberId) || [memberId];
       const summary = variants.map((v) => batchMap.get(v)).find(Boolean) || null;
-      memberSummaryCache.set(memberId, { at: Date.now(), data: summary });
+      if (useCache) memberSummaryCache.set(cacheKey(memberId), { at: Date.now(), data: summary });
       out.push({ memberId, summary });
     });
   }
