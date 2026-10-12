@@ -30,13 +30,13 @@ test("same memberId in tenants A and B never shares a cached summary", async (t)
   assert.deepStrictEqual(seen, [A, B], "A's second call is served from A's own cache entry");
 });
 
-test("a caller with no real tenant is never served from or written to the cache", async (t) => {
+test("a caller with no trusted tenant fails closed: no downstream call, no cache (Phase 2C: no default tenant)", async (t) => {
   let calls = 0;
   t.mock.method(axios, "post", async (_url, body) => {
     calls += 1;
     return { data: { data: { items: body.memberIds.map((m) => ({ memberId: m, n: calls })) } } };
   });
-  await fetchMemberSummariesByMemberIds(["M-2"], undefined, { headers: {} });
-  await fetchMemberSummariesByMemberIds(["M-2"], undefined, { headers: {} });
-  assert.strictEqual(calls, 2);
+  await assert.rejects(fetchMemberSummariesByMemberIds(["M-2"], undefined, { headers: {} }), /trusted tenant|requires a tenant/);
+  await assert.rejects(fetchMemberSummariesByMemberIds(["M-2"], undefined, { headers: {} }), /trusted tenant|requires a tenant/);
+  assert.strictEqual(calls, 0);
 });

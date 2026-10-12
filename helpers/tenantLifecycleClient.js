@@ -9,7 +9,12 @@ function buildInternalHeaders(tenantId) {
   return {
     "Content-Type": "application/json",
     "x-internal-request": "true",
-    "x-tenant-id": tenantId || "default",
+    // Explicit tenant (or the explicit "system" scope for the platform-wide list), never "default".
+    "x-tenant-id": (() => {
+      const t = tenantId == null ? "" : String(tenantId).trim();
+      if (!t) throw new Error("tenantLifecycleClient requires a tenant (no default tenant)");
+      return t;
+    })(),
   };
 }
 

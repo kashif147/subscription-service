@@ -1,3 +1,4 @@
+const { resolveEventTenant } = require("../../helpers/eventTenant");
 const { consumer, publisher } = require("@projectShell/rabbitmq-middleware");
 const { MEMBERSHIP_EVENTS } = require("../events");
 const reminderBatchService = require("../../services/reminderBatch.service");
@@ -13,7 +14,7 @@ function eventData(payload) {
 
 function buildWorkerReq(payload) {
   const data = eventData(payload);
-  const tenantId = data?.tenantId ?? payload?.tenantId;
+  const tenantId = resolveEventTenant(payload); // envelope canonical; mismatch/missing -> quarantine
   const req = createInternalWorkerReq(tenantId, {
     userId: data?.actorUserId || null,
     email: data?.actorEmail || null,
@@ -61,7 +62,7 @@ async function handleReminderMonthlyOrchestrateRequested(payload) {
 
 async function handleReminderCommsRequested(payload) {
   const data = payload?.data || payload;
-  const tenantId = data?.tenantId ?? payload?.tenantId;
+  const tenantId = resolveEventTenant(payload); // envelope canonical; mismatch/missing -> quarantine
   const batchMemberId = data?.batchMemberId;
   const tier = data?.tier;
   const kind = data?.kind;

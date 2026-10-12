@@ -644,7 +644,7 @@ async function requestExecuteRenewalBatch(req, batchId) {
     }
   } else {
     setImmediate(() => {
-      processRenewalBatchExecute(String(batchId)).catch((err) => {
+      processRenewalBatchExecute(String(batchId), req.tenantId).catch((err) => {
         console.error("[renewalBatch] inline execute failed", err);
       });
     });
@@ -670,10 +670,12 @@ async function bulkUpdateSubscriptionChunk(ids, $set) {
 /**
  * @param {string} batchId
  */
-async function processRenewalBatchExecute(batchId) {
+async function processRenewalBatchExecute(batchId, tenantId) {
+  if (!tenantId) throw new Error("processRenewalBatchExecute requires a tenant");
   const claimed = await YearEndBatch.findOneAndUpdate(
     {
       _id: batchId,
+      tenantId: String(tenantId),
       status: RENEWAL_BATCH_STATUS.QUEUED,
     },
     {
@@ -688,7 +690,7 @@ async function processRenewalBatchExecute(batchId) {
   );
 
   if (!claimed) {
-    const existing = await YearEndBatch.findById(batchId).lean();
+    const existing = await YearEndBatch.findOne({ _id: batchId, tenantId: String(tenantId) }).lean();
     if (existing?.status === RENEWAL_BATCH_STATUS.COMPLETED) return;
     console.warn(
       "[renewalBatch] execute skipped (not QUEUED)",

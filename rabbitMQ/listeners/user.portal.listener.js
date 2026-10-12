@@ -1,3 +1,4 @@
+const { resolveEventTenant } = require("../../helpers/eventTenant");
 const User = require("../../models/user.model");
 const { setOnInsertSyncedUserId } = require("../../helpers/syncedUserDocumentId");
 
@@ -20,8 +21,8 @@ async function handlePortalUserCreated(payload) {
     userFullName,
     userFirstName,
     userLastName,
-    tenantId,
   } = data || {};
+  const tenantId = resolveEventTenant(payload); // envelope canonical; mismatch/missing -> quarantine
 
   if (!userId || !tenantId) {
     console.warn(

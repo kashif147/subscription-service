@@ -2,7 +2,8 @@ const Subscription = require("../models/subscription.model");
 
 async function fetchDistinctYearsFromDb(tenantId) {
   const query = { deleted: { $ne: true } };
-  if (tenantId) query.tenantId = tenantId;
+  if (!tenantId) return []; // tenant-owned: never a cross-tenant distinct
+  query.tenantId = tenantId;
 
   const raw = await Subscription.distinct("subscriptionYear", query);
   const nums = raw

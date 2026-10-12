@@ -1,3 +1,4 @@
+const { resolveEventTenant } = require("../../helpers/eventTenant");
 const { MEMBERSHIP_EVENTS } = require("../events");
 const { consumer } = require("@projectShell/rabbitmq-middleware");
 const bizLogger = require("../../config/bizLogger.js");
@@ -289,15 +290,9 @@ async function findLiveSubscriptionForApplication(
     },
   };
 
-  if (tenantId) {
-    const withTenant = await Subscription.findOne({
-      ...baseQuery,
-      tenantId,
-    }).lean();
-    if (withTenant) return withTenant;
-  }
-
-  return Subscription.findOne(baseQuery).lean();
+  // Tenant-owned: never fall back to a lookup across all tenants.
+  if (!tenantId) throw new Error("findLiveSubscriptionForApplication requires a tenant");
+  return Subscription.findOne({ ...baseQuery, tenantId }).lean();
 }
 
 async function handleSubscriptionUpsertRequested(payload, context) {
@@ -324,7 +319,9 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       }
     );
 
-    const { data = {}, tenantId } = payload || {};
+    const { data = {} } = payload || {};
+    // Envelope tenant is canonical; envelope/data mismatch or no tenant -> quarantine (throws).
+    const tenantId = resolveEventTenant(payload);
     const {
       profileId,
       applicationId = null,
@@ -736,9 +733,7 @@ async function handleSubscriptionUpsertRequested(payload, context) {
     }
 
     // Add tenantId if provided (for multi-tenant support)
-    if (tenantId) {
-      subscriptionData.tenantId = tenantId;
-    }
+    subscriptionData.tenantId = tenantId; // always the resolved event tenant
 
     if (resolvedUserId) {
       subscriptionData.userId = resolvedUserId;

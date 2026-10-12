@@ -14,7 +14,9 @@ function sleep(ms) {
 
 /** Minimal request shape for internal async workers (RabbitMQ/event consumers). */
 function createInternalWorkerReq(tenantId, actor = {}) {
-  const tid = tenantId || "default";
+  // Internal jobs/consumers must carry an explicit trusted tenant: no "default" fallback.
+  const tid = tenantId == null ? "" : String(tenantId).trim();
+  if (!tid) throw new Error("createInternalWorkerReq requires a tenant (no default tenant)");
   const { userId = null, email = null } = actor || {};
   return {
     headers: { "x-tenant-id": tid, "x-internal-request": "true" },
@@ -25,10 +27,16 @@ function createInternalWorkerReq(tenantId, actor = {}) {
 }
 
 function buildServiceHeaders(req, tenantId) {
+  // Trusted tenant only: the explicit argument or the authenticated request context
+  // (req.tenantId / req.ctx.tenantId). Never the raw inbound x-tenant-id header, never "default".
+  const trustedTenant = String(tenantId || req?.tenantId || req?.ctx?.tenantId || "").trim();
+  if (!trustedTenant) {
+    throw new Error("Downstream service call requires a trusted tenant (no default tenant)");
+  }
   const headers = {
     'Content-Type': 'application/json',
-    'x-tenant-id': tenantId || req?.headers?.['x-tenant-id'] || 'default',
-    'x-internal-request': 'true', 
+    'x-tenant-id': trustedTenant,
+    'x-internal-request': 'true',
   };
 
   if (req.headers['x-jwt-verified']) {
@@ -39,9 +47,6 @@ function buildServiceHeaders(req, tenantId) {
   }
   if (req.headers['x-user-id']) {
     headers['x-user-id'] = req.headers['x-user-id'];
-  }
-  if (req.headers['x-tenant-id']) {
-    headers['x-tenant-id'] = req.headers['x-tenant-id'];
   }
   if (req.headers['x-user-email']) {
     headers['x-user-email'] = req.headers['x-user-email'];

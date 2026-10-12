@@ -1,3 +1,4 @@
+const { resolveEventTenant } = require("../../helpers/eventTenant");
 const User = require("../../models/user.model");
 const { setOnInsertSyncedUserId } = require("../../helpers/syncedUserDocumentId");
 
@@ -6,7 +7,8 @@ const { setOnInsertSyncedUserId } = require("../../helpers/syncedUserDocumentId"
  */
 async function handleCrmUserCreated(payload) {
   const { data } = payload;
-  const { userId, userEmail, userFullName, tenantId } = data;
+  const { userId, userEmail, userFullName } = data;
+  const tenantId = resolveEventTenant(payload); // envelope canonical; mismatch/missing -> quarantine
 
   if (!userId || !tenantId) {
     console.warn(
@@ -54,7 +56,8 @@ async function handleCrmUserCreated(payload) {
  */
 async function handleCrmUserUpdated(payload) {
   const { data } = payload;
-  const { userId, userEmail, userFullName, tenantId } = data;
+  const { userId, userEmail, userFullName } = data;
+  const tenantId = resolveEventTenant(payload); // envelope canonical; mismatch/missing -> quarantine
 
   if (!userId || !tenantId) {
     console.warn(

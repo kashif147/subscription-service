@@ -1,3 +1,4 @@
+const { resolveEventTenant } = require("../../helpers/eventTenant");
 const { consumer } = require("@projectShell/rabbitmq-middleware");
 const { MEMBERSHIP_EVENTS } = require("../events");
 const { processRenewalBatchExecute } = require("../../services/renewalBatch.service");
@@ -7,7 +8,9 @@ async function handleRenewalExecuteRequested(payload) {
     payload?.data && typeof payload.data === "object" ? payload.data : payload;
   const batchId = data?.batchId ? String(data.batchId) : null;
   if (!batchId) return;
-  await processRenewalBatchExecute(batchId);
+  // The batch is claimed only within the event's tenant (envelope canonical).
+  const tenantId = resolveEventTenant(payload);
+  await processRenewalBatchExecute(batchId, tenantId);
 }
 
 async function registerRenewalBatchConsumers() {

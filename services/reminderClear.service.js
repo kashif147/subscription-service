@@ -144,7 +144,7 @@ async function stepBackRemindersIfPartialPayment(sub, snap, options = {}) {
 
 async function findCurrentSubscriptionByMemberId(memberId, tenantId, req) {
   const mid = String(memberId || "").trim();
-  if (!mid) return null;
+  if (!mid || !tenantId) return null; // tenant-owned: no tenant, no lookup
 
   const wreq = req && req.headers ? req : createInternalWorkerReq(tenantId);
   const profiles = await fetchProfilesByMembershipNumbers([mid], tenantId, wreq);
@@ -156,7 +156,7 @@ async function findCurrentSubscriptionByMemberId(memberId, tenantId, req) {
     isCurrent: true,
     deleted: { $ne: true },
     subscriptionStatus: MEMBERSHIP_STATUS.ACTIVE,
-    ...(tenantId ? { tenantId } : {}),
+    tenantId, // tenant-owned: always scoped
   }).lean();
 }
 

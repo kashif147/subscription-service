@@ -22,7 +22,9 @@ function resolveProfileMergeSubscriptionPlan({ absorbedSubs, masterCurrent }) {
 
 async function mergeProfilesInternal(req, res, next) {
   try {
-    const tenantId = req.tenantId || req.headers["x-tenant-id"] || null;
+    // Trusted context only (set by auth / internal middleware); never the raw header.
+    const tenantId = req.tenantId ? String(req.tenantId) : null;
+    if (!tenantId) return next(AppError.unauthorized("Tenant context required"));
     const {
       masterProfileId,
       absorbedProfileId,
@@ -40,7 +42,7 @@ async function mergeProfilesInternal(req, res, next) {
       return next(AppError.badRequest("Cannot merge a profile with itself"));
     }
 
-    const tenantFilter = tenantId ? { tenantId } : {};
+    const tenantFilter = { tenantId };
 
     const absorbedSubs = await Subscription.find({
       ...tenantFilter,

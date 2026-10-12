@@ -1,3 +1,4 @@
+const { resolveEventTenant } = require("../../helpers/eventTenant");
 const { consumer, publisher } = require("@projectShell/rabbitmq-middleware");
 const {
   tryClearRemindersAfterMemberReceipt,
@@ -10,7 +11,7 @@ const { MEMBERSHIP_EVENTS } = require("../events");
 
 async function handlePaymentReceiptPosted(payload) {
   const data = payload?.data || payload;
-  const tenantId = data?.tenantId ?? payload?.tenantId;
+  const tenantId = resolveEventTenant(payload); // envelope canonical; mismatch/missing -> quarantine
   const memberId = data?.memberId;
   const asOf = data?.asOf;
   if (!tenantId || !memberId) return;
@@ -30,7 +31,7 @@ async function handlePaymentReceiptPosted(payload) {
 
 async function handleDirectDebitCollectionUnpaid(payload) {
   const data = payload?.data || payload;
-  const tenantId = data?.tenantId ?? payload?.tenantId;
+  const tenantId = resolveEventTenant(payload); // envelope canonical; mismatch/missing -> quarantine
   const memberId = data?.memberId;
   const reasonCode = data?.reasonCode || "UNKNOWN";
   const amountEur = data?.amountEur;
