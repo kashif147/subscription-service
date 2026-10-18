@@ -550,29 +550,27 @@ async function getBatchSubscriptionStatus(req, res) {
       return res.fail("Too many profileIds (max 2000)");
     }
 
+    // Always the caller's trusted tenant only: a profile with no subscription in that tenant
+    // gets a null status, never another tenant's (no cross-tenant fallback, no tenant inferred
+    // from the profileId). No trusted tenant -> fail closed.
+    if (!req.tenantId) {
+      return res.status(403).json({
+        status: "fail",
+        data: "Tenant context required",
+      });
+    }
+
     const oids = unique.map((id) => new mongoose.Types.ObjectId(id));
-    const baseQuery = {
+    const query = {
       profileId: { $in: oids },
       deleted: { $ne: true },
+      tenantId: req.tenantId,
     };
-
-    let query = { ...baseQuery };
-    if (req.tenantId) {
-      query.tenantId = req.tenantId;
-    }
-    let subs = await Subscription.find(query)
+    const subs = await Subscription.find(query)
       .select(
         "profileId subscriptionStatus startDate createdAt updatedAt",
       )
       .lean();
-
-    if (subs.length === 0 && req.tenantId) {
-      subs = await Subscription.find(baseQuery)
-        .select(
-          "profileId subscriptionStatus startDate createdAt updatedAt",
-        )
-        .lean();
-    }
 
     const byProfile = new Map();
     for (const s of subs) {
