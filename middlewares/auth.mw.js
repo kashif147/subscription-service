@@ -13,7 +13,7 @@ const { tenantContextMiddleware } = require("@membership/policy-middleware");
  * S2S `ensureAuthenticatedOrInternal` routes (their internal branch trusts a
  * forwarded x-tenant-id header without authentication) — those are Phase 1D.
  */
-const tenantContextWarn = tenantContextMiddleware({ mode: "warn" });
+const tenantContextWarn = tenantContextMiddleware();
 
 const ensureAuthenticated = (req, res, next) => {
   // Check for gateway-verified JWT (trust gateway headers with validation)

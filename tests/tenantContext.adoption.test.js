@@ -37,7 +37,8 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, "..", rel), "utf8");
 
 test("1 tenantContextWarn is mode=warn; no enforce", () => {
   const a = read(path.join("middlewares", "auth.mw.js"));
-  assert.match(a, /tenantContextMiddleware\(\{\s*mode:\s*"warn"\s*\}\)/);
+  assert.match(a, /tenantContextMiddleware\(\)/); // mode comes from TENANT_CONTEXT_MODE (default warn)
+  assert.ok(!/mode:\s*"warn"/.test(a), "no hard-coded warn override");
   assert.ok(!/mode:\s*"enforce"/.test(a));
 });
 test("2 ensureAuthenticatedWithTenantContext = [ensureAuthenticated, tenantContextWarn]", () => {
