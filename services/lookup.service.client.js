@@ -6,14 +6,33 @@ const USER_SERVICE_URL =
   process.env.POLICY_SERVICE_URL ||
   "http://localhost:3000";
 
-const WORK_LOC_TYPE_CACHE_TTL_MS = 5 * 60 * 1000;
-let cachedWorkLocTypeId = null;
-let workLocTypeCacheExpiry = 0;
+// Phase A / A11: the work-location lookup type is addressed by its stable code. There is no
+// process-global type-id cache any more (it was shared by every tenant); user-service caches the
+// by-code result per trusted tenant (lookuptype:v2:<tenantId>:code:WORKLOC).
+const WORK_LOCATION_TYPE_CODE = "WORKLOC";
+const PLACEHOLDER_TENANTS = ["default", "unknown", "system", "null", "undefined"];
 
 const normalizeKey = (value) =>
   String(value || "")
     .trim()
     .toLowerCase();
+
+const cleanTenant = (value) => {
+  const t = value == null ? "" : String(value).trim();
+  return t && !PLACEHOLDER_TENANTS.includes(t.toLowerCase()) ? t : "";
+};
+
+/**
+ * The tenant for an outbound lookup call: the caller's tenant, which must agree with the request's
+ * trusted tenant when there is a request. Missing/placeholder/disagreeing -> "" (no call is made).
+ */
+function resolveLookupTenant(req, tenantId) {
+  const tenant = cleanTenant(tenantId);
+  if (!tenant) return "";
+  const trusted = cleanTenant(req?.ctx?.tenantId || req?.tenantId || req?.user?.tenantId);
+  if (trusted && trusted !== tenant) return "";
+  return tenant;
+}
 
 function buildHeaders(req, tenantId) {
   const headers = {
@@ -26,9 +45,11 @@ function buildHeaders(req, tenantId) {
   }
   for (const key of [
     "x-jwt-verified",
+    "x-correlation-id",
     "x-auth-source",
     "x-user-id",
     "x-user-email",
+    "x-user-type",
     "x-user-roles",
     "x-user-permissions",
   ]) {
@@ -74,40 +95,11 @@ async function fetchLookupById(id, headers) {
   return body?.data ?? body;
 }
 
-async function getWorkLocTypeId(headers) {
-  if (cachedWorkLocTypeId && Date.now() < workLocTypeCacheExpiry) {
-    return cachedWorkLocTypeId;
-  }
-
-  const base = USER_SERVICE_URL.replace(/\/$/, "");
-  const response = await axios.get(`${base}/api/lookuptype`, {
-    headers,
-    timeout: 8000,
-    validateStatus: (status) => status < 500,
-  });
-
-  if (response.status < 200 || response.status >= 300) {
-    return null;
-  }
-
-  const types = Array.isArray(response.data) ? response.data : [];
-  const workLocType = types.find((type) => type?.code === "WORKLOC");
-  if (!workLocType?._id) {
-    return null;
-  }
-
-  cachedWorkLocTypeId = String(workLocType._id);
-  workLocTypeCacheExpiry = Date.now() + WORK_LOC_TYPE_CACHE_TTL_MS;
-  return cachedWorkLocTypeId;
-}
-
 async function findWorkLocationLookupByName(workLocationKey, headers) {
-  const workLocTypeId = await getWorkLocTypeId(headers);
-  if (!workLocTypeId) return null;
-
   const base = USER_SERVICE_URL.replace(/\/$/, "");
+  // 404 (unknown code) or any other non-2xx -> no match.
   const response = await axios.get(
-    `${base}/api/lookup/by-type/${workLocTypeId}/hierarchy`,
+    `${base}/api/lookup/by-type-code/${WORK_LOCATION_TYPE_CODE}/hierarchy`,
     {
       headers,
       timeout: 15000,
@@ -146,7 +138,15 @@ async function isSalaryDeductionEnabledForWorkLocation(
   workLocationKey,
   { req = null, tenantId = "" } = {}
 ) {
-  const headers = buildHeaders(req, tenantId);
+  const tenant = resolveLookupTenant(req, tenantId);
+  if (!tenant) {
+    // Fail closed: never resolve tenant metadata without a trusted tenant.
+    console.warn(
+      "[lookup.service.client] work location lookup skipped: no trusted tenant"
+    );
+    return false;
+  }
+  const headers = buildHeaders(req, tenant);
   try {
     const lookup = await findWorkLocationLookup(workLocationKey, headers);
     return !!lookup?.processSalaryDeduction;
@@ -161,4 +161,6 @@ async function isSalaryDeductionEnabledForWorkLocation(
 
 module.exports = {
   isSalaryDeductionEnabledForWorkLocation,
+  resolveLookupTenant,
+  buildHeaders,
 };

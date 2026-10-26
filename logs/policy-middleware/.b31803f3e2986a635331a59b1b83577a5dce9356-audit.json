@@ -1,0 +1,15 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 30
+    },
+    "auditLog": "/private/tmp/claude-501/-Users-kashifurrehman-Documents-Personal-membership-projectShell/d13d6051-18a8-442c-b7f6-e39961d34591/scratchpad/pa3/subscription-service/logs/policy-middleware/.b31803f3e2986a635331a59b1b83577a5dce9356-audit.json",
+    "files": [
+        {
+            "date": 1793054883082,
+            "name": "/private/tmp/claude-501/-Users-kashifurrehman-Documents-Personal-membership-projectShell/d13d6051-18a8-442c-b7f6-e39961d34591/scratchpad/pa3/subscription-service/logs/policy-middleware/error-2026-10-26.log",
+            "hash": "bccf747cc57abccfe3f59f38088c9e2d61f3563ff14e3781d030e1f22cc1169c"
+        }
+    ],
+    "hashType": "sha256"
+}
