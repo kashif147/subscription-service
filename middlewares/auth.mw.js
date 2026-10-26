@@ -1,5 +1,11 @@
 const { validateGatewayRequest } = require("@membership/policy-middleware/security");
 const { tenantContextMiddleware } = require("@membership/policy-middleware");
+const {
+  ENFORCEMENT: TENANT_ENFORCEMENT,
+  cleanTenant,
+  isValidTenantId,
+  logTenantMissing,
+} = require("../helpers/requestTenant");
 
 /**
  * Phase 1A canonical tenant-context guard — WARN MODE ONLY (non-blocking).
@@ -104,6 +110,13 @@ const ensureAuthenticated = (req, res, next) => {
     const decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
     
     const tenantId = decoded.tenantId || decoded.tid;
+    // Phase A / A3: a token without a tenant claim gets no subscription access (Stage 2 enforces).
+    if (!isValidTenantId(tenantId)) {
+      logTenantMissing(req, "ensureAuthenticated:jwt");
+      if (TENANT_ENFORCEMENT !== "warn") {
+        return res.status(403).json({ code: "TENANT_REQUIRED", message: "Token has no tenant" });
+      }
+    }
     const normalizedRoles = Array.isArray(decoded.roles)
       ? decoded.roles
           .map((role) => (typeof role === "string" ? role : role?.code))
@@ -139,7 +152,22 @@ const ensureAuthenticatedOrInternal = (req, res, next) => {
     req.headers["x-internal-request"] === "1";
 
   if (isInternal) {
-    req.tenantId = req.headers["x-tenant-id"] || req.tenantId;
+    // Phase A / A3: an internal (in-network; the gateway strips this header) call must carry the
+    // calling service's trusted tenant. Stage 1 logs calls without one; Stage 2 fails them closed.
+    const tid = cleanTenant(req.headers["x-tenant-id"]);
+    if (!isValidTenantId(tid)) {
+      logTenantMissing(req, "ensureAuthenticatedOrInternal");
+      if (TENANT_ENFORCEMENT !== "warn") {
+        return res.status(400).json({
+          code: "TENANT_REQUIRED",
+          message: "Internal calls must carry a trusted tenant (x-tenant-id)",
+        });
+      }
+      req.tenantId = req.headers["x-tenant-id"] || req.tenantId;
+      return next();
+    }
+    req.tenantId = tid;
+    req.ctx = { ...(req.ctx || {}), tenantId: tid };
     return next();
   }
 
