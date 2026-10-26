@@ -11,6 +11,8 @@ const {
 const {
   publishSubscriptionCurrentUpdated,
 } = require("../rabbitMQ/publishers/subscription.current.updated.publisher.js");
+const { isValidTenantId } = require("../helpers/requestTenant");
+const { createInternalWorkerReq } = require("../helpers/serviceClient");
 
 /** UTC start of calendar day for `d` */
 function utcDayStartMs(d) {
@@ -125,7 +127,13 @@ async function runPostgraduateStudentCategoryRenewalOnce() {
       continue;
     }
 
-    const doc = await Subscription.findOne({ _id: lean._id });
+    // Phase A / A3: tenant-owned row; skip (never default) when it has no valid tenant.
+    const tenantId = lean.tenantId != null ? String(lean.tenantId).trim() : "";
+    if (!isValidTenantId(tenantId)) {
+      console.warn("[POSTGRAD_CATEGORY_RENEWAL] skip: subscription without tenant", { subscriptionId: lean._id?.toString() });
+      continue;
+    }
+    const doc = await Subscription.findOne({ _id: lean._id, tenantId });
     if (!doc) continue;
     if (!isPostgraduateCategory(doc.membershipCategory, fromCategory)) continue;
 
@@ -166,9 +174,8 @@ async function runPostgraduateStudentCategoryRenewalOnce() {
     try {
       const profiles = await fetchProfilesByIds(
         [doc.profileId],
-        doc.tenantId || undefined,
-        { headers: {} },
-        { relaxTenant: !doc.tenantId }
+        tenantId,
+        createInternalWorkerReq(tenantId)
       );
       memberId = profiles[0]?.membershipNumber ?? null;
       memberIdResolved = !!(memberId && String(memberId).trim());
@@ -185,7 +192,7 @@ async function runPostgraduateStudentCategoryRenewalOnce() {
         {
           subscriptionId: doc._id.toString(),
           profileId: doc.profileId.toString(),
-          tenantId: doc.tenantId || undefined,
+          tenantId,
           applicationId: doc.applicationId || null,
           memberId: memberIdResolved ? String(memberId).trim() : null,
           adjustmentKey,
@@ -200,7 +207,7 @@ async function runPostgraduateStudentCategoryRenewalOnce() {
           source: "postgraduate_student_year_one_renewal",
         },
         {
-          tenantId: doc.tenantId,
+          tenantId,
           exchange: "membership.events",
           routingKey: MEMBERSHIP_EVENTS.SUBSCRIPTION_CATEGORY_CHANGED,
           metadata: {

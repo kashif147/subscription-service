@@ -15,6 +15,7 @@ const {
 const {
   publishSubscriptionCurrentUpdated,
 } = require("../rabbitMQ/publishers/subscription.current.updated.publisher.js");
+const { isValidTenantId } = require("../helpers/requestTenant");
 
 const NOTIFICATION_TITLE =
   "Congratulations on Your Graduation";
@@ -180,10 +181,10 @@ async function runUndergraduateGraduationCancellationOnce(options = {}) {
     const chunk = candidates.slice(i, i + CHUNK);
     const byTenant = new Map();
     for (const lean of chunk) {
-      const tid =
-        lean.tenantId != null && String(lean.tenantId).trim()
-          ? String(lean.tenantId)
-          : "default";
+      // Phase A / A3: every subscription is tenant-owned; a row without a valid tenant is skipped,
+      // never bucketed under a fallback tenant.
+      const tid = lean.tenantId != null ? String(lean.tenantId).trim() : "";
+      if (!isValidTenantId(tid)) continue;
       if (!byTenant.has(tid)) byTenant.set(tid, []);
       byTenant.get(tid).push(lean);
     }
@@ -200,9 +201,7 @@ async function runUndergraduateGraduationCancellationOnce(options = {}) {
       ];
       let profiles = [];
       try {
-        profiles = await fetchProfilesByIds(profileIds, tenantId, req, {
-          relaxTenant: true,
-        });
+        profiles = await fetchProfilesByIds(profileIds, tenantId, req);
       } catch (e) {
         logStructured({
           phase: "error",
@@ -219,10 +218,12 @@ async function runUndergraduateGraduationCancellationOnce(options = {}) {
     }
 
     for (const lean of chunk) {
-      const tenantId =
-        lean.tenantId != null && String(lean.tenantId).trim()
-          ? String(lean.tenantId)
-          : "default";
+      const tenantId = lean.tenantId != null ? String(lean.tenantId).trim() : "";
+      if (!isValidTenantId(tenantId)) {
+        skipped += 1;
+        logStructured({ phase: "skipped", reason: "subscription_without_tenant", subscriptionId: lean._id?.toString() });
+        continue;
+      }
       const req = createInternalWorkerReq(tenantId, {
         email: "system@undergraduate-graduation-job",
       });
@@ -254,7 +255,7 @@ async function runUndergraduateGraduationCancellationOnce(options = {}) {
         continue;
       }
 
-      const doc = await Subscription.findById(lean._id);
+      const doc = await Subscription.findOne({ _id: lean._id, tenantId });
       if (!doc) {
         skipped += 1;
         logStructured({
@@ -317,6 +318,7 @@ async function runUndergraduateGraduationCancellationOnce(options = {}) {
 
       const cancelFilter = {
         _id: doc._id,
+        tenantId,
         isCurrent: true,
         deleted: { $ne: true },
         subscriptionStatus: MEMBERSHIP_STATUS.ACTIVE,

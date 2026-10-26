@@ -16,7 +16,9 @@ function sleep(ms) {
 function createInternalWorkerReq(tenantId, actor = {}) {
   // Internal jobs/consumers must carry an explicit trusted tenant: no "default" fallback.
   const tid = tenantId == null ? "" : String(tenantId).trim();
-  if (!tid) throw new Error("createInternalWorkerReq requires a tenant (no default tenant)");
+  if (!tid || ["default", "unknown", "system", "null", "undefined"].includes(tid.toLowerCase())) {
+    throw new Error("createInternalWorkerReq requires a tenant (no default tenant)");
+  }
   const { userId = null, email = null } = actor || {};
   return {
     headers: { "x-tenant-id": tid, "x-internal-request": "true" },

@@ -70,3 +70,25 @@ test("controller source: no conditional tenant filter remains", () => {
   assert.ok(!/if \(req\.tenantId\)/.test(src));
   assert.strictEqual((src.match(/resolveRequestTenant\(req, res, "/g) || []).length, 7);
 });
+
+test("stage 2: internal worker request rejects empty and placeholder tenants", () => {
+  const { createInternalWorkerReq } = require("../helpers/serviceClient");
+  for (const t of [undefined, "", " ", "default", "DEFAULT", "unknown", "system"]) {
+    assert.throws(() => createInternalWorkerReq(t), /requires a tenant/, String(t));
+  }
+  assert.strictEqual(createInternalWorkerReq(A).tenantId, A);
+});
+
+test("stage 2: jobs never use a fallback tenant and bind record reads/writes to the row tenant", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const ug = fs.readFileSync(path.join(__dirname, "..", "services", "undergraduateGraduationCancellation.service.js"), "utf8");
+  const pg = fs.readFileSync(path.join(__dirname, "..", "jobs", "postgraduateStudentCategoryRenewal.job.js"), "utf8");
+  for (const src of [ug, pg]) {
+    assert.ok(!/"default"/.test(src), "no literal default tenant");
+    assert.ok(!/relaxTenant/.test(src), "no relaxTenant");
+    assert.ok(!/Subscription\.findById\(/.test(src), "no findById");
+  }
+  assert.ok(/Subscription\.findOne\(\{ _id: lean\._id, tenantId \}\)/.test(ug));
+  assert.ok(/_id: doc\._id,\s*\n\s*tenantId,/.test(ug), "cancel filter carries the tenant");
+  assert.ok(/Subscription\.findOne\(\{ _id: lean\._id, tenantId \}\)/.test(pg));
+});

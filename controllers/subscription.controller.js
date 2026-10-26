@@ -74,9 +74,7 @@ async function getSubscriptionsByProfile(req, res) {
 
     const tenantScope = resolveRequestTenant(req, res, "getSubscriptionsByProfile");
     if (!tenantScope.proceed) return;
-    if (tenantScope.tenantId) {
-      query.tenantId = tenantScope.tenantId;
-    }
+    query.tenantId = tenantScope.tenantId;
 
     const onlyCurrent = isCurrentFilter === "true";
     if (onlyCurrent) {
@@ -441,9 +439,7 @@ async function getSubscriptions(req, res) {
     // Restrict to CRM user's tenant so profile-service and account-service return data for same tenant
     const tenantScope = resolveRequestTenant(req, res, "getSubscriptions");
     if (!tenantScope.proceed) return;
-    if (tenantScope.tenantId) {
-      query.tenantId = tenantScope.tenantId;
-    }
+    query.tenantId = tenantScope.tenantId;
 
     if (profileId) {
       if (!mongoose.Types.ObjectId.isValid(profileId)) {
@@ -625,9 +621,7 @@ async function getSubscriptionById(req, res) {
     };
     const tenantScope = resolveRequestTenant(req, res, "getSubscriptionById");
     if (!tenantScope.proceed) return;
-    if (tenantScope.tenantId) {
-      query.tenantId = tenantScope.tenantId;
-    }
+    query.tenantId = tenantScope.tenantId;
 
     const subscription = await Subscription.findOne(query).lean();
     if (!subscription) {
@@ -699,9 +693,7 @@ async function updateSubscriptionById(req, res) {
     };
     const tenantScope = resolveRequestTenant(req, res, "updateSubscriptionById");
     if (!tenantScope.proceed) return;
-    if (tenantScope.tenantId) {
-      query.tenantId = tenantScope.tenantId;
-    }
+    query.tenantId = tenantScope.tenantId;
 
     const doc = await Subscription.findOne(query);
     if (!doc) {
@@ -1001,9 +993,7 @@ async function runResignMembershipBySubscriptionId(req, res, subscriptionIdStr) 
     };
     const tenantScope = resolveRequestTenant(req, res, "runResignMembershipBySubscriptionId");
     if (!tenantScope.proceed) return;
-    if (tenantScope.tenantId) {
-      baseQuery.tenantId = tenantScope.tenantId;
-    }
+    baseQuery.tenantId = tenantScope.tenantId;
 
     const existing = await Subscription.findOne(baseQuery).lean();
     if (!existing) {
@@ -1157,9 +1147,7 @@ async function resignMembership(req, res) {
     };
     const tenantScope = resolveRequestTenant(req, res, "resignMembership");
     if (!tenantScope.proceed) return;
-    if (tenantScope.tenantId) {
-      filter.tenantId = tenantScope.tenantId;
-    }
+    filter.tenantId = tenantScope.tenantId;
 
     const sub = await Subscription.findOne(filter).select("_id").lean();
     if (!sub) {
@@ -1201,9 +1189,7 @@ async function runUndoResignMembershipBySubscriptionId(req, res, subscriptionIdS
     };
     const tenantScope = resolveRequestTenant(req, res, "runUndoResignMembershipBySubscriptionId");
     if (!tenantScope.proceed) return;
-    if (tenantScope.tenantId) {
-      baseQuery.tenantId = tenantScope.tenantId;
-    }
+    baseQuery.tenantId = tenantScope.tenantId;
 
     const resignedSubscription = await Subscription.findOne(baseQuery).lean();
 
