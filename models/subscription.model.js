@@ -12,9 +12,10 @@ const {
 
 const SubscriptionSchema = new mongoose.Schema(
   {
+    // Phase A / A2: every subscription is owned by exactly one tenant (0 legacy rows lack one).
     tenantId: {
       type: String,
-      required: false,
+      required: true,
       index: true,
     },
     profileId: {

@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const { resolveEventTenant } = require("../../helpers/eventTenant");
 const { consumer, publisher } = require("@projectShell/rabbitmq-middleware");
 const { MEMBERSHIP_EVENTS } = require("../events");
@@ -68,11 +69,23 @@ async function handleReminderCommsRequested(payload) {
   const kind = data?.kind;
   if (!tenantId || !batchMemberId) return;
 
-  const row = await ReminderBatchMember.findById(batchMemberId).lean();
-  if (!row) return;
+  // Phase A / A2: the batch member and its subscription must belong to the event tenant; ownership is
+  // never inferred from an id alone. A record of another tenant is treated as not found (no mutation).
+  if (!mongoose.Types.ObjectId.isValid(String(batchMemberId))) {
+    console.warn("[reminder-batch] comms skipped — malformed batchMemberId", { eventId: payload?.eventId || null });
+    return;
+  }
+  const row = await ReminderBatchMember.findOne({ _id: batchMemberId, tenantId }).lean();
+  if (!row) {
+    console.warn("[reminder-batch] EventTenantRecordMismatch: no batch member for this tenant", {
+      batchMemberId: String(batchMemberId),
+      eventId: payload?.eventId || null,
+    });
+    return;
+  }
 
   const sub = row.subscriptionId
-    ? await Subscription.findById(row.subscriptionId).select("userId").lean()
+    ? await Subscription.findOne({ _id: row.subscriptionId, tenantId }).select("userId").lean()
     : null;
   const userId = sub?.userId;
   if (!userId) {
@@ -115,7 +128,7 @@ async function handleReminderCommsRequested(payload) {
   );
 
   await ReminderBatchMember.updateOne(
-    { _id: batchMemberId },
+    { _id: batchMemberId, tenantId },
     { $set: { commsEnqueuedAt: new Date() } }
   );
 }
@@ -152,4 +165,6 @@ async function registerReminderBatchConsumers() {
 
 module.exports = {
   registerReminderBatchConsumers,
+  // exported for tests (Phase A / A2 tenant binding)
+  handleReminderCommsRequested,
 };

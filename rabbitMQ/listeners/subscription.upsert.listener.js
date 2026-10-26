@@ -260,6 +260,7 @@ async function resolveProfileCurrentSubscriptionDoc(
   if (currentSubId != null && String(currentSubId).trim() !== "") {
     const byId = await Subscription.findOne({
       _id: currentSubId,
+      tenantId,
       profileId: profileIdObjectId,
       deleted: { $ne: true },
     }).lean();
@@ -267,6 +268,7 @@ async function resolveProfileCurrentSubscriptionDoc(
   }
 
   return Subscription.findOne({
+    tenantId,
     profileId: profileIdObjectId,
     isCurrent: true,
     deleted: { $ne: true },
@@ -426,8 +428,10 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       tenantId,
     });
 
-    // All subscription rows for this profile (ignore tenantId) — avoids misclassified movement when legacy docs lack tenantId.
+    // All of this tenant's subscription rows for the profile (Phase A / A2: always bound to the event
+    // tenant; 0 subscriptions lack a tenantId, so no legacy fallback is needed).
     const existingSubs = await Subscription.find({
+      tenantId,
       profileId: profileIdObjectId,
     })
       .sort({
@@ -504,7 +508,7 @@ async function handleSubscriptionUpsertRequested(payload, context) {
         }
         if (Object.keys(update).length > 0) {
           await Subscription.updateOne(
-            { _id: existingForApp._id },
+            { _id: existingForApp._id, tenantId },
             { $set: update }
           );
           bizLogger.business("RabbitMQ subscription upsert updated existing application row", {
@@ -524,9 +528,10 @@ async function handleSubscriptionUpsertRequested(payload, context) {
           );
         }
         // Re-fetch so publish uses latest userId if we just set it
-        const existingForPublish = await Subscription.findById(
-          existingForApp._id
-        ).lean();
+        const existingForPublish = await Subscription.findOne({
+          _id: existingForApp._id,
+          tenantId,
+        }).lean();
         const subForEvent = existingForPublish || existingForApp;
         // Re-publish current.updated only when this row is still current (avoid syncing resigned history).
         if (subForEvent.isCurrent) {
@@ -615,7 +620,7 @@ async function handleSubscriptionUpsertRequested(payload, context) {
         update.userId = resolvedUserId;
       }
       if (Object.keys(update).length > 0) {
-        await Subscription.updateOne({ _id: profileCurrentSub._id }, { $set: update });
+        await Subscription.updateOne({ _id: profileCurrentSub._id, tenantId }, { $set: update });
         bizLogger.business("RabbitMQ subscription upsert updated current row", {
           eventType: payload?.eventType || MEMBERSHIP_EVENTS.SUBSCRIPTION_UPSERT_REQUESTED,
           eventId: payload?.eventId || null,
@@ -630,7 +635,7 @@ async function handleSubscriptionUpsertRequested(payload, context) {
         });
       }
       const subForEvent =
-        (await Subscription.findById(profileCurrentSub._id).lean()) ||
+        (await Subscription.findOne({ _id: profileCurrentSub._id, tenantId }).lean()) ||
         profileCurrentSub;
       try {
         const profileLean = await fetchProfileWithRetry(
@@ -669,6 +674,7 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       // row is current; it must not rewrite the member's historical reason.
       await Subscription.updateMany(
         {
+          tenantId,
           profileId: profileIdObjectId,
           isCurrent: true,
           deleted: { $ne: true },
