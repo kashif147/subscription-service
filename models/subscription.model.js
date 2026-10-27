@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { tenantOwnershipPlugin } = require("./plugins/tenantOwnership.plugin");
 const {
   PAYMENT_TYPE,
   PAYMENT_FREQUENCY,
@@ -181,5 +182,8 @@ SubscriptionSchema.pre("save", function preSaveCoerceReminders(next) {
   coerceRemindersSubdoc(this);
   next();
 });
+
+// Phase A / A15: tenantId is immutable once written (ownership cannot move between tenants).
+SubscriptionSchema.plugin(tenantOwnershipPlugin, { modelName: "Subscription" });
 
 module.exports = mongoose.model("subscription", SubscriptionSchema);

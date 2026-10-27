@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const { REMINDER_BATCH_TIER } = require("../constants/enums");
+const { tenantOwnershipPlugin } = require("./plugins/tenantOwnership.plugin");
 
 const ReminderBatchMemberSchema = new mongoose.Schema(
   {
@@ -68,5 +69,8 @@ ReminderBatchMemberSchema.index(
   { batchId: 1, profileId: 1 },
   { unique: true }
 );
+
+// Phase A / A15: tenantId is immutable once written (ownership cannot move between tenants).
+ReminderBatchMemberSchema.plugin(tenantOwnershipPlugin, { modelName: "ReminderBatchMember" });
 
 module.exports = mongoose.model("ReminderBatchMember", ReminderBatchMemberSchema);

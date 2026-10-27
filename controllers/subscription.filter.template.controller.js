@@ -211,6 +211,10 @@ exports.updateTemplate = async (req, res) => {
     if (error instanceof AppError && error.status === 404) {
       return res.status(404).json({ status: "fail", data: error.message });
     }
+    if (error instanceof AppError && error.status === 423) {
+      // Phase A / A14: shared (null-tenant) default templates are write-frozen.
+      return res.status(423).json({ status: "fail", code: error.code, data: error.message });
+    }
     console.error("updateTemplate:", error);
     return res.serverError(error);
   }
@@ -230,6 +234,9 @@ exports.deleteTemplate = async (req, res) => {
   } catch (error) {
     if (error instanceof AppError && error.status === 404) {
       return res.status(404).json({ status: "fail", data: error.message });
+    }
+    if (error instanceof AppError && error.status === 423) {
+      return res.status(423).json({ status: "fail", code: error.code, data: error.message });
     }
     console.error("deleteTemplate:", error);
     return res.serverError(error);

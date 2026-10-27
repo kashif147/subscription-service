@@ -1,6 +1,11 @@
 const mongoose = require("mongoose");
 const Template = require("../models/template.model");
 const { AppError } = require("../errors/AppError");
+const {
+  assertSharedTemplateDeleteAllowed,
+  assertSharedTemplateUpdateAllowed,
+  isFrozenSharedTemplate,
+} = require("./sharedTemplateFreeze");
 const { MEMBERSHIP_STATUS } = require("../constants/enums");
 
 function normalizeTemplateType(type) {
@@ -204,7 +209,12 @@ class SubscriptionFilterTemplateService {
         ? normalizeTemplateType(templateType)
         : normalizeTemplateType(template.templateType);
 
-    if (template.systemDefault && !allowSystemDefaultEdits) {
+    // Phase A / A14: a shared (null-tenant) default is write-frozen - 423 on any real change; the
+    // per-user isDefault preference still works and the shared row itself is never saved.
+    assertSharedTemplateUpdateAllowed(template, updateData);
+    const sharedFrozen = isFrozenSharedTemplate(template);
+
+    if (template.systemDefault && (!allowSystemDefaultEdits || sharedFrozen)) {
       if (isDefault === true) {
         await Template.updateMany(
           {
@@ -218,7 +228,7 @@ class SubscriptionFilterTemplateService {
         );
       }
       if (pinned !== undefined) template.pinned = pinned;
-      const saved = await template.save();
+      const saved = sharedFrozen ? template : await template.save();
       const response = toTemplateResponse(saved);
       if (isDefault === true) response.isDefault = true;
       return response;
@@ -281,6 +291,7 @@ class SubscriptionFilterTemplateService {
       throw AppError.notFound("Filter template not found");
     }
 
+    assertSharedTemplateDeleteAllowed(template); // Phase A / A14: shared default -> 423
     template.meta.deleted = true;
     template.meta.deletedAt = new Date();
     return template.save();
