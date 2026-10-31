@@ -17,14 +17,16 @@ function normalizeRoleValue(role) {
     .replace(/\s+/g, " ");
 }
 
-function hasSuperUserRole(req) {
+// Phase B / Z9: the legacy tenant SU is retired; the tenant administrator (ASU) keeps the year-end access
+// the former SU had. Own tenant only: the renewal batch is created in the trusted request tenant.
+function hasTenantAdminRole(req) {
   const roles = Array.isArray(req.roles)
     ? req.roles
     : Array.isArray(req.user?.roles)
       ? req.user.roles
       : [];
   return roles.map(normalizeRoleValue).some((role) =>
-    ["su", "super user", "superuser"].includes(role)
+    ["asu", "assistant super user", "assistantsuperuser"].includes(role)
   );
 }
 
@@ -51,11 +53,11 @@ function ensureYearEndAccess(req, res) {
     permissions.includes("subscriptions:write") ||
     permissions.includes("payments:write");
 
-  if (hasWritePermission || hasSuperUserRole(req)) return true;
+  if (hasWritePermission || hasTenantAdminRole(req)) return true;
 
   res.status(403).json({
     status: "fail",
-    data: "Access denied. Year-end renewal requires Accounts, Membership Officer, or Super User access.",
+    data: "Access denied. Year-end renewal requires Accounts, Membership Officer, or tenant administrator (ASU) access.",
   });
   return false;
 }
