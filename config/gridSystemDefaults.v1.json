@@ -3,7 +3,7 @@
   "source": {
     "kind": "dev-tenant-row-snapshot",
     "provisional": true,
-    "note": "No CRM grid-column-defaults page exists for the members grid, and the code seed (scripts/seed-subscription-system-default-template.js) lists all 59 raw response columns. v1 is the curated MULTIAUTH system default actually shown today (11 columns, 25 labels, Active filter), copied field-for-field. Content needs owner confirmation before provisioning relies on it.",
+    "note": "Canonical members default = the curated MULTIAUTH system default (11 columns, 25 labels, Active filter, flags), copied field-for-field. Why: it is the only persisted members default anywhere (subscription-service has never had a shared tenantless row - tenantId is required), it is what MULTIAUTH users see today, and the owner named the curated configuration as the intended default (2026-11-01). Not used: the code seed (scripts/seed-subscription-system-default-template.js), which lists all 59 raw response columns without labels, and the CRM's built-in Members columns, which DEVTENANTB/DEVDIRB fall back to today because they have no row. Provisioning inserts this only where a tenant has no members default; existing tenant defaults are never overwritten. Provisional until provisioning (P-phase) confirms it.",
     "row": "\u20260d478e",
     "rowUpdatedAt": "2026-04-25T18:10:33.778Z",
     "snapshotTaken": "2026-11-01"
@@ -64,7 +64,9 @@
           ]
         }
       },
-      "visibleFilters": []
+      "visibleFilters": [],
+      "isDefault": false,
+      "pinned": true
     }
   }
 }
