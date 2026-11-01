@@ -122,8 +122,11 @@ test("real mongod: repeated GET is idempotent, no row and no columns:[] record; 
     assert.strictEqual(await coll.countDocuments({ columns: { $size: 0 } }), 0);
   } finally {
     await mongoose.disconnect();
-    mongod.kill();
-    await new Promise((r) => setTimeout(r, 300));
-    if (dbPath.startsWith(os.tmpdir())) fs.rmSync(dbPath, { recursive: true, force: true });
+    { const exited = new Promise((r) => mongod.once("exit", r)); mongod.kill(); await Promise.race([exited, new Promise((r) => setTimeout(r, 5000))]); }
+    try {
+      if (dbPath.startsWith(os.tmpdir())) fs.rmSync(dbPath, { recursive: true, force: true });
+    } catch (_) {
+      // best-effort temp cleanup (mongod may still be flushing)
+    }
   }
 });
