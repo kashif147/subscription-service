@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "source": {
+    "kind": "dev-tenant-row-snapshot",
+    "provisional": true,
+    "note": "Canonical members default = the curated MULTIAUTH system default (11 columns, 25 labels, Active filter, flags), copied field-for-field. Why: it is the only persisted members default anywhere (subscription-service has never had a shared tenantless row - tenantId is required), it is what MULTIAUTH users see today, and the owner named the curated configuration as the intended default (2026-11-01). Not used: the code seed (scripts/seed-subscription-system-default-template.js), which lists all 59 raw response columns without labels, and the CRM's built-in Members columns, which DEVTENANTB/DEVDIRB fall back to today because they have no row. Provisioning inserts this only where a tenant has no members default; existing tenant defaults are never overwritten. Provisional until provisioning (P-phase) confirms it.",
+    "row": "\u20260d478e",
+    "rowUpdatedAt": "2026-04-25T18:10:33.778Z",
+    "snapshotTaken": "2026-11-01"
+  },
+  "templates": {
+    "members": {
+      "name": "System default",
+      "templateType": "members",
+      "aliases": [
+        "member",
+        "subscription"
+      ],
+      "columns": [
+        "membershipNumber",
+        "personalDetails.fullName",
+        "membershipCategory",
+        "subscriptionStatus",
+        "startDate",
+        "endDate",
+        "financialDetails.membershipFee",
+        "financialDetails.outstandingBalance",
+        "financialDetails.lastPaymentAmount",
+        "financialDetails.lastPaymentDate",
+        "professionalDetails.grade"
+      ],
+      "columnLabels": {
+        "membershipNumber": "Membership No",
+        "personalDetails.fullName": "Full Name",
+        "membershipCategory": "Membership Category",
+        "startDate": "Start Date",
+        "endDate": "End Date",
+        "subscriptionStatus": "Membership Status",
+        "financialDetails.membershipFee": "Membership Fee",
+        "financialDetails.outstandingBalance": "Outstanding Balance",
+        "professionalDetails.grade": "Grade",
+        "financialDetails.lastPaymentAmount": "Last Payment Amount",
+        "financialDetails.lastPaymentDate": "Last Payment Date",
+        "professionalDetails.branch": "Branch",
+        "normalizedEmail": "Email Address",
+        "contactInfo.mobileNumber": "Mobile Number",
+        "isActive": "Active",
+        "professionalDetails.workLocation": "Work Location",
+        "professionalDetails.primarySection": "Primary Section",
+        "user.userEmail": "User Email",
+        "professionalDetails.region": "Region",
+        "professionalDetails.secondarySection": "Secondary Section",
+        "reminderNo": "Reminder No",
+        "reminderDate": "Reminder Date",
+        "CancellationFlag": "Cancellation Flag",
+        "createdAt": "Created At",
+        "updatedAt": "Updated At"
+      },
+      "filters": {
+        "subscriptionStatus": {
+          "operator": "equal_to",
+          "values": [
+            "active"
+          ]
+        }
+      },
+      "visibleFilters": [],
+      "isDefault": false,
+      "pinned": true
+    }
+  }
+}
