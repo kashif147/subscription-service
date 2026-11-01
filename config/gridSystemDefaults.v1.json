@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "source": {
+    "kind": "dev-tenant-row-snapshot",
+    "provisional": true,
+    "note": "No CRM grid-column-defaults page exists for the members grid, and the code seed (scripts/seed-subscription-system-default-template.js) lists all 59 raw response columns. v1 is the curated MULTIAUTH system default actually shown today (11 columns, 25 labels, Active filter), copied field-for-field. Content needs owner confirmation before provisioning relies on it.",
+    "row": "\u20260d478e",
+    "rowUpdatedAt": "2026-04-25T18:10:33.778Z",
+    "snapshotTaken": "2026-11-01"
+  },
+  "templates": {
+    "members": {
+      "name": "System default",
+      "templateType": "members",
+      "aliases": [
+        "member",
+        "subscription"
+      ],
+      "columns": [
+        "membershipNumber",
+        "personalDetails.fullName",
+        "membershipCategory",
+        "subscriptionStatus",
+        "startDate",
+        "endDate",
+        "financialDetails.membershipFee",
+        "financialDetails.outstandingBalance",
+        "financialDetails.lastPaymentAmount",
+        "financialDetails.lastPaymentDate",
+        "professionalDetails.grade"
+      ],
+      "columnLabels": {
+        "membershipNumber": "Membership No",
+        "personalDetails.fullName": "Full Name",
+        "membershipCategory": "Membership Category",
+        "startDate": "Start Date",
+        "endDate": "End Date",
+        "subscriptionStatus": "Membership Status",
+        "financialDetails.membershipFee": "Membership Fee",
+        "financialDetails.outstandingBalance": "Outstanding Balance",
+        "professionalDetails.grade": "Grade",
+        "financialDetails.lastPaymentAmount": "Last Payment Amount",
+        "financialDetails.lastPaymentDate": "Last Payment Date",
+        "professionalDetails.branch": "Branch",
+        "normalizedEmail": "Email Address",
+        "contactInfo.mobileNumber": "Mobile Number",
+        "isActive": "Active",
+        "professionalDetails.workLocation": "Work Location",
+        "professionalDetails.primarySection": "Primary Section",
+        "user.userEmail": "User Email",
+        "professionalDetails.region": "Region",
+        "professionalDetails.secondarySection": "Secondary Section",
+        "reminderNo": "Reminder No",
+        "reminderDate": "Reminder Date",
+        "CancellationFlag": "Cancellation Flag",
+        "createdAt": "Created At",
+        "updatedAt": "Updated At"
+      },
+      "filters": {
+        "subscriptionStatus": {
+          "operator": "equal_to",
+          "values": [
+            "active"
+          ]
+        }
+      },
+      "visibleFilters": []
+    }
+  }
+}
