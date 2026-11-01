@@ -2,8 +2,7 @@
   "version": 1,
   "source": {
     "kind": "dev-tenant-row-snapshot",
-    "provisional": true,
-    "note": "Canonical members default = the curated MULTIAUTH system default (11 columns, 25 labels, Active filter, flags), copied field-for-field. Why: it is the only persisted members default anywhere (subscription-service has never had a shared tenantless row - tenantId is required), it is what MULTIAUTH users see today, and the owner named the curated configuration as the intended default (2026-11-01). Not used: the code seed (scripts/seed-subscription-system-default-template.js), which lists all 59 raw response columns without labels, and the CRM's built-in Members columns, which DEVTENANTB/DEVDIRB fall back to today because they have no row. Provisioning inserts this only where a tenant has no members default; existing tenant defaults are never overwritten. Provisional until provisioning (P-phase) confirms it.",
+    "note": "Canonical members default = the curated MULTIAUTH system default (11 columns, 25 labels, Active filter, flags), copied field-for-field. Why: it is the only persisted members default anywhere (subscription-service has never had a shared tenantless row - tenantId is required), it is what MULTIAUTH users see today, and the owner named the curated configuration as the intended default (2026-11-01). Not used: the code seed (scripts/seed-subscription-system-default-template.js), which lists all 59 raw response columns without labels, and the CRM's built-in Members columns, which DEVTENANTB/DEVDIRB fall back to today because they have no row. Provisioning inserts this only where a tenant has no members default; existing tenant defaults are never overwritten. Owner-validated and accepted as the canonical v1 default (2026-11-01, provisioning P1); provisional status cleared.",
     "row": "\u20260d478e",
     "rowUpdatedAt": "2026-04-25T18:10:33.778Z",
     "snapshotTaken": "2026-11-01"
