@@ -247,9 +247,12 @@ exports.getDefaultTemplate = async (req, res) => {
   if (!ctx) return;
 
   try {
+    // Read-only: the user's default, else the system default, else null (= the client's built-in
+    // default). Never creates a view.
     const template = await subscriptionFilterTemplateService.getDefaultTemplate(
       ctx.tenantId,
-      ctx.userId
+      ctx.userId,
+      req.query.type || req.query.templateType || "members"
     );
     return res.success(template);
   } catch (error) {

@@ -6,7 +6,6 @@ const {
   assertSharedTemplateUpdateAllowed,
   isFrozenSharedTemplate,
 } = require("./sharedTemplateFreeze");
-const { MEMBERSHIP_STATUS } = require("../constants/enums");
 
 function normalizeTemplateType(type) {
   const normalized = String(type || "").trim().toLowerCase();
@@ -297,33 +296,30 @@ class SubscriptionFilterTemplateService {
     return template.save();
   }
 
-  async getDefaultTemplate(tenantId, userId) {
-    let template = await Template.findOne({
+  /**
+   * Resolve (never create) the caller's default view for a template type: the user's own isDefault
+   * view in this tenant, else the system default (tenant-owned first, then the transitional tenantless
+   * row), else null = the client's built-in (code-defined) default. Read-only: it used to persist a
+   * blank user view (columns: []) when the user had no default.
+   */
+  async getDefaultTemplate(tenantId, userId, type = "members") {
+    const own = await Template.findOne({
       tenantId,
       userId,
+      templateType: templateTypeQuery(type),
       isDefault: true,
       "meta.deleted": false,
     });
+    if (own) return toTemplateResponse(own);
 
-    if (!template) {
-      template = new Template({
-        tenantId,
-        userId,
-        templateType: "members",
-        filters: {
-          subscriptionStatus: {
-            operator: "equal_to",
-            values: [MEMBERSHIP_STATUS.ACTIVE],
-          },
-        },
-        columns: [],
-        isDefault: true,
-        pinned: false,
-      });
-      template = await template.save();
+    const systemDefault = await findSystemDefaultTemplateDoc(type, tenantId);
+    if (systemDefault) {
+      const out = toTemplateResponse(systemDefault);
+      out.isDefault = true;
+      return out;
     }
 
-    return template;
+    return null;
   }
 
   async getDefaultTemplateForType(tenantId, userId, type = "members") {
