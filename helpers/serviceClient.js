@@ -590,8 +590,35 @@ async function fetchProfilesByMembershipNumbers(membershipNumbers, tenantId, req
   }
 }
 
+/**
+ * P5 portal object authorization: the caller's OWN profileId, resolved by the owning service
+ * (profile-service GET /api/profile/my-profile) from the caller's VERIFIED identity. The caller's
+ * gateway headers / Authorization are forwarded (cross-service-auth rule); x-internal-request is
+ * deliberately NOT sent, so a user call never becomes an internal one downstream.
+ * Returns the profileId string, or null when unbound / denied / unreachable (callers fail closed).
+ */
+async function fetchOwnPortalProfileId(req) {
+  try {
+    const headers = buildServiceHeaders(req, req?.tenantId || req?.ctx?.tenantId);
+    delete headers['x-internal-request'];
+    const response = await axios.get(`${PROFILE_SERVICE_URL}/api/profile/my-profile`, {
+      headers,
+      timeout: 8000,
+      validateStatus: (status) => status < 500,
+    });
+    if (response.status !== 200) return null;
+    const profileId = response.data?.data?.profileId;
+    return profileId ? String(profileId) : null;
+  } catch (error) {
+    console.warn('[subscription-service] own-profile lookup failed:', error.code || error.message);
+    return null;
+  }
+}
+
 module.exports = {
   createInternalWorkerReq,
+  buildServiceHeaders,
+  fetchOwnPortalProfileId,
   fetchProfilesByIds,
   fetchProfilesByMembershipNumbers,
   fetchPaymentsByMemberIds,
