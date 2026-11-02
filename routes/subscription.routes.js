@@ -21,6 +21,10 @@ const {
   ensureAuthenticatedWithTenantContext,
 } = require("../middlewares/auth.mw");
 const { mergeProfilesInternal } = require("../controllers/profileMerge.controller");
+const {
+  requireInternalOnly,
+  authorizeProfileSubscriptionRead,
+} = require("../middlewares/profileSubscriptionAuthz.mw");
 
 // Auth or internal (x-internal-request): current subscription only
 const getCurrentOnly = (req, res) => {
@@ -28,12 +32,25 @@ const getCurrentOnly = (req, res) => {
   return getSubscriptionsByProfile(req, res);
 };
 
-router.get("/profile/:profileId/current", ensureAuthenticatedOrInternal, getCurrentOnly);
-router.get("/profile/:profileId", ensureAuthenticatedOrInternal, getSubscriptionsByProfile);
+// P5: internal callers unchanged; CRM needs subscriptions:read; PORTAL only its own profile.
+router.get(
+  "/profile/:profileId/current",
+  ensureAuthenticatedOrInternal,
+  authorizeProfileSubscriptionRead,
+  getCurrentOnly,
+);
+router.get(
+  "/profile/:profileId",
+  ensureAuthenticatedOrInternal,
+  authorizeProfileSubscriptionRead,
+  getSubscriptionsByProfile,
+);
 
+// P5: internal service calls only (profile-service duplicate merge); user tokens denied.
 router.post(
   "/internal/profile-merge",
   ensureAuthenticatedOrInternal,
+  requireInternalOnly,
   mergeProfilesInternal,
 );
 
