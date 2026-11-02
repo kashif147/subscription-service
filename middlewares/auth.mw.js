@@ -140,13 +140,31 @@ const ensureAuthenticated = (req, res, next) => {
 };
 
 /**
+ * True when the request carries ANY user identity: an Authorization header, or any gateway identity
+ * header (x-jwt-verified, x-auth-source, x-user-*). Presence-based, like account-service's
+ * internalAuth: such a request is authenticated as that user and never becomes internal, even when
+ * it also sends x-internal-request (P5: a user token never becomes internal).
+ */
+function carriesUserIdentity(req) {
+  const h = req.headers || {};
+  const present = (v) => v != null && String(v).trim() !== "";
+  if (present(h.authorization) || present(h["x-jwt-verified"]) || present(h["x-auth-source"])) {
+    return true;
+  }
+  return Object.keys(h).some((k) => k.toLowerCase().startsWith("x-user-") && present(h[k]));
+}
+
+/**
  * Allow either authenticated (JWT/gateway) OR internal service call (x-internal-request).
  * Used for profile subscription endpoints called by profile-service, user-service, etc.
+ * Internal = x-internal-request with NO user identity; a request carrying any user identity is
+ * authenticated as that user (ensureAuthenticated), never as internal.
  */
 const ensureAuthenticatedOrInternal = (req, res, next) => {
   const isInternal =
-    req.headers["x-internal-request"] === "true" ||
-    req.headers["x-internal-request"] === "1";
+    (req.headers["x-internal-request"] === "true" ||
+      req.headers["x-internal-request"] === "1") &&
+    !carriesUserIdentity(req);
 
   if (isInternal) {
     // Phase A / A3: an internal (in-network; the gateway strips this header) call must carry the
@@ -177,6 +195,7 @@ const ensureAuthenticatedOrInternal = (req, res, next) => {
 const ensureAuthenticatedWithTenantContext = [ensureAuthenticated, tenantContextWarn];
 
 module.exports = {
+  carriesUserIdentity,
   ensureAuthenticated,
   ensureAuthenticatedOrInternal,
   tenantContextWarn,
