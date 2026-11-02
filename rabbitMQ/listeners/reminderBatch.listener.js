@@ -3,7 +3,9 @@ const { resolveEventTenant } = require("../../helpers/eventTenant");
 const { consumer, publisher } = require("@projectShell/rabbitmq-middleware");
 const { MEMBERSHIP_EVENTS } = require("../events");
 const reminderBatchService = require("../../services/reminderBatch.service");
+const ReminderBatch = require("../../models/reminderBatch.model");
 const ReminderBatchMember = require("../../models/reminderBatchMember.model");
+const { REMINDER_BATCH_STATUS } = require("../../constants/enums");
 const Subscription = require("../../models/subscription.model");
 const { createInternalWorkerReq } = require("../../helpers/serviceClient");
 
@@ -13,25 +15,92 @@ function eventData(payload) {
     : payload;
 }
 
+const { safeCorrelationId } = require("../../jobs/reminderBatch.rabbit.js");
+
+/**
+ * P5 service authority: the worker runs every reminder job with subscription-service's own internal
+ * service authority (createInternalWorkerReq: x-internal-request + the trusted event tenant). It
+ * NEVER replays request headers stored in a payload. Only the verified actor id (audit attribution)
+ * and a correlation id are taken from the job.
+ */
 function buildWorkerReq(payload) {
   const data = eventData(payload);
   const tenantId = resolveEventTenant(payload); // envelope canonical; mismatch/missing -> quarantine
-  const req = createInternalWorkerReq(tenantId, {
-    userId: data?.actorUserId || null,
-    email: data?.actorEmail || null,
-  });
-  if (data?.headers && typeof data.headers === "object") {
-    req.headers = {
-      ...req.headers,
-      ...data.headers,
-      "x-tenant-id": tenantId,
-      "x-internal-request": "true",
-    };
+  const req = createInternalWorkerReq(tenantId, { userId: data?.actorUserId || null });
+  const correlationId = safeCorrelationId(data?.correlationId || payload?.correlationId);
+  if (correlationId) {
+    req.correlationId = correlationId;
+    req.headers["x-correlation-id"] = correlationId;
   }
   return req;
 }
 
+/**
+ * Legacy payloads (published before the P5 service-authority migration) embed the triggering user's
+ * request headers - bearer token and gateway identity - under `data.headers`. Such a job was queued
+ * WITHOUT the trigger-time permission check (the only finance gate was account-service evaluating the
+ * replayed identity), so running it now with service authority would execute work whose requester was
+ * never authorized, and replaying the identity is the defect being removed. Decision: REFUSE.
+ *   - never replayed, never processed, never re-published;
+ *   - the handler RETURNS (message acked): throwing would retry (republish) and finally dead-letter the
+ *     message, i.e. write the credential to the DLQ again;
+ *   - build: a still-queued batch (status pending_build, tenant-scoped) is marked failed so the CRM
+ *     user can simply re-run the build; execute / monthly-orchestrate: no state change (re-trigger);
+ *   - a safe counter + warning with no header names or values and no stored identity.
+ */
+const legacyCredentialPayloadRefusals = { build: 0, execute: 0, orchestrate: 0 };
+
+function getLegacyCredentialPayloadRefusals() {
+  return { ...legacyCredentialPayloadRefusals };
+}
+
+function isLegacyCredentialPayload(payload) {
+  const data = eventData(payload);
+  return Boolean(data && typeof data === "object" && Object.prototype.hasOwnProperty.call(data, "headers"));
+}
+
+const LEGACY_REFUSED_MESSAGE =
+  "Queued request predates the service-authority migration and was not processed; re-run it from the CRM";
+
+async function refuseLegacyCredentialPayload(kind, payload) {
+  legacyCredentialPayloadRefusals[kind] += 1;
+  const data = eventData(payload);
+  let tenantId = null;
+  try {
+    tenantId = resolveEventTenant(payload);
+  } catch (_e) {
+    tenantId = null; // mismatch/missing: drop without any mutation (and without a DLQ copy)
+  }
+  console.warn("[reminder-batch] LegacyCredentialPayloadRefused", {
+    kind,
+    eventId: payload?.eventId || null,
+    tenantResolved: Boolean(tenantId),
+    refusedTotal: legacyCredentialPayloadRefusals[kind],
+  });
+  if (kind !== "build" || !tenantId) return;
+  const batchId = data?.batchId;
+  if (!batchId || !mongoose.Types.ObjectId.isValid(String(batchId))) return;
+  try {
+    await ReminderBatch.updateOne(
+      { _id: String(batchId), tenantId, status: REMINDER_BATCH_STATUS.PENDING_BUILD },
+      {
+        $set: {
+          status: REMINDER_BATCH_STATUS.FAILED,
+          error: LEGACY_REFUSED_MESSAGE,
+          "buildProgress.lastError": LEGACY_REFUSED_MESSAGE,
+        },
+      }
+    );
+  } catch (err) {
+    console.warn("[reminder-batch] legacy build refusal: batch status not updated", {
+      eventId: payload?.eventId || null,
+      message: err?.message || String(err),
+    });
+  }
+}
+
 async function handleReminderBuildRequested(payload) {
+  if (isLegacyCredentialPayload(payload)) return refuseLegacyCredentialPayload("build", payload);
   const data = eventData(payload);
   const req = buildWorkerReq(payload);
   try {
@@ -47,12 +116,14 @@ async function handleReminderBuildRequested(payload) {
 }
 
 async function handleReminderExecuteRequested(payload) {
+  if (isLegacyCredentialPayload(payload)) return refuseLegacyCredentialPayload("execute", payload);
   const data = eventData(payload);
   const req = buildWorkerReq(payload);
   await reminderBatchService.executeReminderBatch(req, data?.batchId);
 }
 
 async function handleReminderMonthlyOrchestrateRequested(payload) {
+  if (isLegacyCredentialPayload(payload)) return refuseLegacyCredentialPayload("orchestrate", payload);
   const data = eventData(payload);
   const req = buildWorkerReq(payload);
   await reminderBatchService.runMonthlyOrchestration(req, {
@@ -165,6 +236,11 @@ async function registerReminderBatchConsumers() {
 
 module.exports = {
   registerReminderBatchConsumers,
-  // exported for tests (Phase A / A2 tenant binding)
+  // exported for tests (Phase A / A2 tenant binding; P5 service authority)
   handleReminderCommsRequested,
+  handleReminderBuildRequested,
+  handleReminderExecuteRequested,
+  handleReminderMonthlyOrchestrateRequested,
+  buildWorkerReq,
+  getLegacyCredentialPayloadRefusals,
 };

@@ -1,105 +1,80 @@
 const { publisher } = require("@projectShell/rabbitmq-middleware");
 const { MEMBERSHIP_EVENTS } = require("../rabbitMQ/events");
+const { isValidTenantId } = require("../helpers/requestTenant");
 
 function isRabbitConfigured() {
   return Boolean(process.env.RABBIT_URL && String(process.env.RABBIT_URL).trim());
 }
 
-function captureForwardHeaders(req) {
-  const headers = {};
-  [
-    "authorization",
-    "x-jwt-verified",
-    "x-auth-source",
-    "x-user-id",
-    "x-user-email",
-    "x-user-type",
-    "x-user-roles",
-    "x-user-permissions",
-    "x-tenant-id",
-    "x-correlation-id",
-  ].forEach((key) => {
-    const value = req?.headers?.[key];
-    if (value) headers[key] = value;
+const CORRELATION_ID_FORMAT = /^[A-Za-z0-9._:-]{1,128}$/;
+
+function safeCorrelationId(value) {
+  const v = value == null ? "" : String(value).trim();
+  return CORRELATION_ID_FORMAT.test(v) ? v : null;
+}
+
+/**
+ * P5 service authority: a queued reminder job carries NO user credential (no bearer token, no
+ * gateway identity headers) and no actor PII (no email). It carries only the trusted
+ * tenant, the verified actor id (audit attribution), a correlation id and the job parameters. The
+ * consumer runs the job with subscription-service's internal service authority; the user's
+ * permission to start it was checked at the trigger (middlewares/reminderBatchAuthz.mw.js).
+ */
+function buildJobPayload(req, params) {
+  const tenantId = req?.tenantId == null ? "" : String(req.tenantId).trim();
+  if (!isValidTenantId(tenantId)) {
+    throw new Error("Reminder job requires a trusted tenant (no default tenant)");
+  }
+  return {
+    ...params,
+    tenantId,
+    actorUserId: req.userId ? String(req.userId) : null,
+    correlationId: safeCorrelationId(req.correlationId || req.headers?.["x-correlation-id"]),
+  };
+}
+
+async function publishJob(eventType, data) {
+  if (!isRabbitConfigured()) throw new Error("RABBIT_URL not configured");
+  await publisher.publish(eventType, data, {
+    tenantId: data.tenantId,
+    correlationId: data.correlationId || undefined,
+    exchange: "membership.events",
+    routingKey: eventType,
+    metadata: { service: "subscription-service", version: "1.0" },
   });
-  headers["x-internal-request"] = "true";
-  return headers;
+  return { queued: true, transport: "rabbitmq", event: eventType };
 }
 
 async function publishReminderBuildRequested(req, batchId) {
   if (!isRabbitConfigured()) throw new Error("RABBIT_URL not configured");
-  await publisher.publish(
+  return publishJob(
     MEMBERSHIP_EVENTS.REMINDER_BATCH_BUILD_REQUESTED,
-    {
-      batchId: String(batchId),
-      tenantId: String(req.tenantId),
-      actorUserId: req.userId || null,
-      actorEmail: req.user?.email || null,
-      headers: captureForwardHeaders(req),
-    },
-    {
-      tenantId: req.tenantId,
-      exchange: "membership.events",
-      routingKey: MEMBERSHIP_EVENTS.REMINDER_BATCH_BUILD_REQUESTED,
-      metadata: { service: "subscription-service", version: "1.0" },
-    }
+    buildJobPayload(req, { batchId: String(batchId) })
   );
-  return { queued: true, transport: "rabbitmq", event: MEMBERSHIP_EVENTS.REMINDER_BATCH_BUILD_REQUESTED };
 }
 
 async function publishReminderExecuteRequested(req, batchId) {
   if (!isRabbitConfigured()) throw new Error("RABBIT_URL not configured");
-  await publisher.publish(
+  return publishJob(
     MEMBERSHIP_EVENTS.REMINDER_BATCH_EXECUTE_REQUESTED,
-    {
-      batchId: String(batchId),
-      tenantId: String(req.tenantId),
-      actorUserId: req.userId || null,
-      actorEmail: req.user?.email || null,
-      headers: captureForwardHeaders(req),
-    },
-    {
-      tenantId: req.tenantId,
-      exchange: "membership.events",
-      routingKey: MEMBERSHIP_EVENTS.REMINDER_BATCH_EXECUTE_REQUESTED,
-      metadata: { service: "subscription-service", version: "1.0" },
-    }
+    buildJobPayload(req, { batchId: String(batchId) })
   );
-  return {
-    queued: true,
-    transport: "rabbitmq",
-    event: MEMBERSHIP_EVENTS.REMINDER_BATCH_EXECUTE_REQUESTED,
-  };
 }
 
 async function publishReminderMonthlyOrchestrateRequested(req, body) {
   if (!isRabbitConfigured()) throw new Error("RABBIT_URL not configured");
-  await publisher.publish(
+  return publishJob(
     MEMBERSHIP_EVENTS.REMINDER_BATCH_MONTHLY_ORCHESTRATE_REQUESTED,
-    {
+    buildJobPayload(req, {
       cancellationBatchId: String(body.cancellationBatchId),
       reminderBatchId: String(body.reminderBatchId),
-      tenantId: String(req.tenantId),
-      actorUserId: req.userId || null,
-      actorEmail: req.user?.email || null,
-      headers: captureForwardHeaders(req),
-    },
-    {
-      tenantId: req.tenantId,
-      exchange: "membership.events",
-      routingKey: MEMBERSHIP_EVENTS.REMINDER_BATCH_MONTHLY_ORCHESTRATE_REQUESTED,
-      metadata: { service: "subscription-service", version: "1.0" },
-    }
+    })
   );
-  return {
-    queued: true,
-    transport: "rabbitmq",
-    event: MEMBERSHIP_EVENTS.REMINDER_BATCH_MONTHLY_ORCHESTRATE_REQUESTED,
-  };
 }
 
 module.exports = {
   isRabbitConfigured,
+  safeCorrelationId,
   publishReminderBuildRequested,
   publishReminderExecuteRequested,
   publishReminderMonthlyOrchestrateRequested,

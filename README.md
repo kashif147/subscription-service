@@ -32,6 +32,8 @@ All reminder-batch routes use `ensureAuthenticated` (see `middlewares/auth.mw.js
 1. **Gateway (production):** `x-jwt-verified: true`, `x-auth-source: gateway`, plus `x-user-id`, `x-tenant-id`, `x-user-type`, `x-user-email`, `x-user-roles`, `x-user-permissions` (and gateway validation as configured). **`x-user-type` must be `CRM`** or the controller returns 403.
 2. **Direct service / local:** `Authorization: Bearer <JWT>` where the JWT payload includes **`userType: "CRM"`** (and `tenantId` / `tid` so `req.tenantId` is set). Optionally pass **`x-tenant-id`** if not embedded in the token.
 
+**Trigger authorization (P5 service authority).** `POST /`, `POST /:batchId/build`, `POST /:batchId/execute` and `POST /monthly-orchestrate` additionally run `requireReminderBatchTrigger` (`middlewares/reminderBatchAuthz.mw.js`) before anything is created or queued: the caller must be **CRM** (403 `CRM_ONLY`) and hold one of exactly `*`, `admin`, `payments:*`, `payments:read`, `accounts.admin:*`, `accounts.admin:read`, `accounts.reports:*`, `accounts.reports:read` from the verified identity (403 `FINANCE_READ_REQUIRED`). That is the user claim set account-service's `reminder-eligibility-bulk` guard admits (`requireInternalOrFinanceRead` → `canFinanceRead`), so the allowed population is unchanged. Build/execute then run with subscription-service's **internal service authority** (`createInternalWorkerReq`), on both the sync and the RabbitMQ transport; the caller's identity is never forwarded to profile-/account-service for this work. A CRM user without the claim can no longer create a batch (previously the batch was created and its build then failed at account-service).
+
 ### Request bodies
 
 **`POST /`** (create)
@@ -62,6 +64,8 @@ After the batch document is created (`draft`), the service **immediately** runs 
 
 `POST /:batchId/build`, `POST /:batchId/execute`, and `POST /monthly-orchestrate` publish membership events when `RABBIT_URL` is configured. `subscription-service` consumers process those events asynchronously and update batch progress/status in Mongo.
 
+Queued job payloads carry **no user credential**: only the job ids (`batchId`, or `cancellationBatchId` + `reminderBatchId`), the trusted `tenantId`, the verified `actorUserId` (audit) and `correlationId` — no `Authorization`, no gateway `x-*` identity headers, no actor email (audit rows written by the queued path show the actor id with `system@reminder-batch` as email). The consumer (`rabbitMQ/listeners/reminderBatch.listener.js`) runs every job with `createInternalWorkerReq` and never replays stored headers. **Legacy payloads** published before this change (they contain `data.headers`) are **refused**: not processed, not replayed, acked (not retried/dead-lettered, so the credential is not copied to the DLQ again); a still-`pending_build` batch is marked `failed` so it can be rebuilt, execute/orchestrate are left unchanged for the CRM user to re-trigger; a `LegacyCredentialPayloadRefused` warning (no header names/values, no stored identity) and a per-kind counter are emitted.
+
 RabbitMQ remains the channel for **`SUBSCRIPTION_CANCELLED`**, **`SUBSCRIPTION_CANCEL_GRACE_ENDED`**, and **`publishSubscriptionCurrentUpdated`** after Mongo writes.
 
 Batch documents expose **`buildProgress`** / **`executeProgress`** (`totalMembersEstimated`, `chunksTotal`, `chunksCompleted`, `lastError`).
@@ -85,10 +89,9 @@ Batch documents expose **`buildProgress`** / **`executeProgress`** (`totalMember
 
 | Variable | Purpose |
 |----------|---------|
-| `ACCOUNT_SERVICE_URL` | Account API base (no trailing slash) |
-| `ACCOUNTS_API_KEY` | Sent as `x-api-key` on internal calls; must match account-service |
+| `ACCOUNT_SERVICE_URL` | Account API base (no trailing slash). Must be the in-network account-service URL: the gateway strips `x-internal-request`, so a gateway URL breaks every internal worker call. |
 
-Build uses **`POST {ACCOUNT_SERVICE_URL}/api/internal/members/reminder-eligibility-bulk`**.
+Build uses **`POST {ACCOUNT_SERVICE_URL}/api/internal/members/reminder-eligibility-bulk`** with internal-only headers (`x-internal-request: true`, trusted `x-tenant-id`, `x-correlation-id`; `helpers/serviceClient.js` `buildInternalServiceHeaders`) on every path — CRM sync build, queued worker, lifecycle scheduler, receipt listener.
 
 ### MongoDB collections
 

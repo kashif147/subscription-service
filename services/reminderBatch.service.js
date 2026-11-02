@@ -146,9 +146,24 @@ function arrearsFromSummary(summary) {
   return amount == null ? null : Math.max(0, amount);
 }
 
+/**
+ * P5 service authority: build / execute (sync HTTP path, queued worker, scheduler) always run their
+ * downstream calls (profile batch, account eligibility) with subscription-service's internal service
+ * authority. The live HTTP request's identity is never forwarded: the user's permission to start the
+ * job was checked at the trigger (middlewares/reminderBatchAuthz.mw.js). Only the actor (audit
+ * attribution) and the correlation id are carried over. Tenant = the trusted job tenant.
+ */
 function workerReq(req, tenantId) {
-  if (req && req.headers) return req;
-  return createInternalWorkerReq(tenantId);
+  const w = createInternalWorkerReq(tenantId || req?.tenantId, {
+    userId: req?.userId || null,
+    email: req?.user?.email || null,
+  });
+  const correlationId = req?.correlationId || req?.headers?.["x-correlation-id"];
+  if (correlationId) {
+    w.correlationId = String(correlationId);
+    w.headers["x-correlation-id"] = String(correlationId);
+  }
+  return w;
 }
 
 function ensureRemindersSubdoc(sub) {
@@ -1197,6 +1212,8 @@ async function executeReminderBatch(req, batchId) {
 }
 
 module.exports = {
+  // exported for tests (P5 service authority)
+  _serviceAuthorityReq: workerReq,
   createReminderBatch,
   listReminderBatches,
   getReminderBatchById,

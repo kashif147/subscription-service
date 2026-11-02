@@ -28,6 +28,24 @@ function createInternalWorkerReq(tenantId, actor = {}) {
   };
 }
 
+/**
+ * P5 service authority: headers for a genuine service-to-service call made with
+ * subscription-service's OWN authority - x-internal-request + the validated trusted tenant
+ * (+ correlation id). Never carries a user credential or gateway identity (no Authorization,
+ * x-jwt-verified, x-auth-source, x-user-*), whatever request triggered the work.
+ */
+function buildInternalServiceHeaders(tenantId, { correlationId } = {}) {
+  const tid = createInternalWorkerReq(tenantId).tenantId; // same tenant validation (throws)
+  const headers = {
+    'Content-Type': 'application/json',
+    'x-tenant-id': tid,
+    'x-internal-request': 'true',
+  };
+  const cid = correlationId == null ? '' : String(correlationId).trim();
+  if (cid) headers['x-correlation-id'] = cid;
+  return headers;
+}
+
 function buildServiceHeaders(req, tenantId) {
   // Trusted tenant only: the explicit argument or the authenticated request context
   // (req.tenantId / req.ctx.tenantId). Never the raw inbound x-tenant-id header, never "default".
@@ -547,7 +565,12 @@ function getMemberIdLookupKeys(memberId) {
  */
 async function fetchReminderEligibilityBulk(memberIds, tenantId, asOf, req) {
   if (!memberIds || memberIds.length === 0) return [];
-  const headers = buildServiceHeaders(req || createInternalWorkerReq(tenantId), tenantId);
+  // P5: single choke point for every reminder path (CRM sync build, queued worker, scheduler,
+  // receipt listener): always internal service authority, never the caller's user identity.
+  // Trusted tenant = explicit argument, else the authenticated request context (never a raw header).
+  const headers = buildInternalServiceHeaders(tenantId || req?.tenantId || req?.ctx?.tenantId, {
+    correlationId: req?.correlationId || req?.headers?.['x-correlation-id'],
+  });
   const url = `${ACCOUNT_SERVICE_URL}/api/internal/members/reminder-eligibility-bulk`;
   const asOfIso =
     asOf instanceof Date
@@ -617,6 +640,7 @@ async function fetchOwnPortalProfileId(req) {
 
 module.exports = {
   createInternalWorkerReq,
+  buildInternalServiceHeaders,
   buildServiceHeaders,
   fetchOwnPortalProfileId,
   fetchProfilesByIds,

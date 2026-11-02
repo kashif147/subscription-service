@@ -13,3 +13,11 @@ internal-only (`x-internal-request` branch, no `req.user`; user tokens 403 `INTE
 `subscriptions:read`, and PORTAL only for the caller's own profile as resolved by
 profile-service `GET /api/profile/my-profile` (forwarded identity) — mismatch 403 `NOT_OWNER`.
 Internal precedence is unchanged: in-network callers that also forward user headers stay internal.
+
+Reminder-batch **triggers** (`POST /`, `/:batchId/build`, `/:batchId/execute`, `/monthly-orchestrate`)
+also require one of the exact finance-read claims account-service's reminder-eligibility-bulk guard
+admits (`middlewares/reminderBatchAuthz.mw.js`, source lines cited there). The jobs then run with
+subscription-service's internal service authority; queued RabbitMQ payloads never carry the user's
+Authorization or gateway identity headers, and the worker never replays headers from a payload
+(legacy payloads that contain `data.headers` are refused, not processed). Don't reintroduce header
+capture into `jobs/reminderBatch.rabbit.js` — `tests/reminderServiceAuthority.p5.test.js` pins this.
