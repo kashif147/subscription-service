@@ -322,15 +322,21 @@ function reminderJobHandlers() {
   };
 }
 
-async function registerReminderBatchConsumers() {
-  const queueName = REMINDER_JOBS_QUEUE;
-  await consumer.createQueue(queueName, { durable: true });
-  await consumer.bindQueue(queueName, "membership.events", [
+// Idempotent queue/DLX/binding assertion; re-run before every resubscribe so a broker that lost its
+// definitions (e.g. recreated without a volume) gets them back instead of failing consume with 404.
+async function assertReminderJobsTopology() {
+  await consumer.createQueue(REMINDER_JOBS_QUEUE, { durable: true });
+  await consumer.bindQueue(REMINDER_JOBS_QUEUE, "membership.events", [
     MEMBERSHIP_EVENTS.REMINDER_BATCH_BUILD_REQUESTED,
     MEMBERSHIP_EVENTS.REMINDER_BATCH_EXECUTE_REQUESTED,
     MEMBERSHIP_EVENTS.REMINDER_BATCH_MONTHLY_ORCHESTRATE_REQUESTED,
     MEMBERSHIP_EVENTS.REMINDER_BATCH_COMMS_REQUESTED,
   ]);
+}
+
+async function registerReminderBatchConsumers() {
+  const queueName = REMINDER_JOBS_QUEUE;
+  await assertReminderJobsTopology();
 
   // P5: explicit acknowledgement (rabbitMQ/explicitAckConsumer.js) instead of the shared consumer, whose
   // ack-then-republish-from-a-timer retry can lose a job on a crash. The four reminder handlers are NOT
@@ -340,6 +346,9 @@ async function registerReminderBatchConsumers() {
     queueName,
     handlers: reminderJobHandlers(),
     prefetch: REMINDER_JOBS_PREFETCH,
+    // P5: resubscribe after a broker/channel drop (the shared middleware reconnects its connection but
+    // never re-registers consumers).
+    ensureTopology: assertReminderJobsTopology,
   });
 }
 
@@ -348,9 +357,13 @@ async function stopReminderBatchConsumers() {
   reminderJobsConsumer = null;
 }
 
+// Test-only accessor for the live consumer handle (real-broker resubscribe test).
+const __handleForTests = () => reminderJobsConsumer;
+
 module.exports = {
   registerReminderBatchConsumers,
   stopReminderBatchConsumers,
+  __handleForTests,
   reminderJobHandlers,
   REMINDER_JOBS_QUEUE,
   REMINDER_JOBS_PREFETCH,
