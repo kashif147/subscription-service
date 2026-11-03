@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const { resolveEventTenant } = require("../../helpers/eventTenant");
-const { consumer, publisher } = require("@projectShell/rabbitmq-middleware");
+const { consumer, publisher, connectionManager } = require("@projectShell/rabbitmq-middleware");
+const { startExplicitAckConsumer } = require("../explicitAckConsumer");
 const { MEMBERSHIP_EVENTS } = require("../events");
 const reminderBatchService = require("../../services/reminderBatch.service");
 const ReminderBatch = require("../../models/reminderBatch.model");
@@ -49,11 +50,12 @@ function buildWorkerReq(payload) {
  *      or value, a token, a gateway identity or an email. Redelivery updates the same record.
  *   2. build: a still-queued batch (status pending_build, tenant-scoped) is then marked failed so the
  *      CRM user can re-run the build; execute / monthly-orchestrate: no state change (re-trigger).
- *   3. Only when 1 (and 2) succeeded does the handler return, so the middleware acks the message.
- *      If the record (or the batch update) cannot be written the handler THROWS: the message is never
- *      acked as handled. rabbitmq-middleware (db70fb8) then republishes it with x-retry-count up to
- *      maxRetries (3) and finally nack(requeue=false) -> subscription-service.reminder-batch.jobs.dlq.
- *      Bounded; never requeue=true; the business work is not lost silently.
+ *   3. Only when 1 (and 2) succeeded does the handler return, so the explicit-ack adapter
+ *      (rabbitMQ/explicitAckConsumer.js) acks the delivery. If the record (or the batch update) cannot
+ *      be written the handler THROWS and the delivery is never acked: first delivery -> nack(requeue=true)
+ *      (one broker-side redelivery), redelivered -> nack(requeue=false) -> broker dead-letters it to
+ *      subscription-service.reminder-batch.jobs.dlq. No in-memory retry, no copy, no loop; a crash at any
+ *      point before the ack leaves the delivery with the broker.
  *   - never replayed, never processed, never re-published by this service;
  *   - logs carry kind, event id, tenant-resolved flag and delivery count only.
  */
@@ -306,8 +308,22 @@ async function handleReminderCommsRequested(payload) {
   );
 }
 
+const REMINDER_JOBS_QUEUE = "subscription-service.reminder-batch.jobs";
+const REMINDER_JOBS_PREFETCH = 2;
+let reminderJobsConsumer = null;
+
+/** Event type -> handler for the reminder jobs queue (consumed by the explicit-ack adapter). */
+function reminderJobHandlers() {
+  return {
+    [MEMBERSHIP_EVENTS.REMINDER_BATCH_BUILD_REQUESTED]: handleReminderBuildRequested,
+    [MEMBERSHIP_EVENTS.REMINDER_BATCH_EXECUTE_REQUESTED]: handleReminderExecuteRequested,
+    [MEMBERSHIP_EVENTS.REMINDER_BATCH_MONTHLY_ORCHESTRATE_REQUESTED]: handleReminderMonthlyOrchestrateRequested,
+    [MEMBERSHIP_EVENTS.REMINDER_BATCH_COMMS_REQUESTED]: handleReminderCommsRequested,
+  };
+}
+
 async function registerReminderBatchConsumers() {
-  const queueName = "subscription-service.reminder-batch.jobs";
+  const queueName = REMINDER_JOBS_QUEUE;
   await consumer.createQueue(queueName, { durable: true });
   await consumer.bindQueue(queueName, "membership.events", [
     MEMBERSHIP_EVENTS.REMINDER_BATCH_BUILD_REQUESTED,
@@ -316,28 +332,28 @@ async function registerReminderBatchConsumers() {
     MEMBERSHIP_EVENTS.REMINDER_BATCH_COMMS_REQUESTED,
   ]);
 
-  consumer.registerHandler(
-    MEMBERSHIP_EVENTS.REMINDER_BATCH_BUILD_REQUESTED,
-    handleReminderBuildRequested
-  );
-  consumer.registerHandler(
-    MEMBERSHIP_EVENTS.REMINDER_BATCH_EXECUTE_REQUESTED,
-    handleReminderExecuteRequested
-  );
-  consumer.registerHandler(
-    MEMBERSHIP_EVENTS.REMINDER_BATCH_MONTHLY_ORCHESTRATE_REQUESTED,
-    handleReminderMonthlyOrchestrateRequested
-  );
-  consumer.registerHandler(
-    MEMBERSHIP_EVENTS.REMINDER_BATCH_COMMS_REQUESTED,
-    handleReminderCommsRequested
-  );
+  // P5: explicit acknowledgement (rabbitMQ/explicitAckConsumer.js) instead of the shared consumer, whose
+  // ack-then-republish-from-a-timer retry can lose a job on a crash. The four reminder handlers are NOT
+  // registered in the shared consumer's handler map.
+  reminderJobsConsumer = await startExplicitAckConsumer({
+    connectionManager,
+    queueName,
+    handlers: reminderJobHandlers(),
+    prefetch: REMINDER_JOBS_PREFETCH,
+  });
+}
 
-  await consumer.consume(queueName, { prefetch: 2 });
+async function stopReminderBatchConsumers() {
+  if (reminderJobsConsumer) await reminderJobsConsumer.stop();
+  reminderJobsConsumer = null;
 }
 
 module.exports = {
   registerReminderBatchConsumers,
+  stopReminderBatchConsumers,
+  reminderJobHandlers,
+  REMINDER_JOBS_QUEUE,
+  REMINDER_JOBS_PREFETCH,
   // exported for tests (Phase A / A2 tenant binding; P5 service authority)
   handleReminderCommsRequested,
   handleReminderBuildRequested,

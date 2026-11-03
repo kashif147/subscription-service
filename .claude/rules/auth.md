@@ -20,7 +20,12 @@ admits (`middlewares/reminderBatchAuthz.mw.js`, source lines cited there). The j
 subscription-service's internal service authority; queued RabbitMQ payloads never carry the user's
 Authorization or gateway identity headers, and the worker never replays headers from a payload
 (legacy payloads that contain `data.headers` are refused, not processed, after a credential-free
-`reminder_job_quarantine` record is written; a failed write throws so the job is retried/dead-lettered,
-never acked as handled). Don't reintroduce header capture into `jobs/reminderBatch.rabbit.js`, and never
-copy a header name/value into the quarantine record or a log — `tests/reminderServiceAuthority.p5.test.js`
-and `tests/reminderLegacyQuarantine.p5.test.js` pin this.
+`reminder_job_quarantine` record is written; a failed write throws so the job is never acked as handled).
+The reminder jobs queue is consumed by `rabbitMQ/explicitAckConsumer.js` (explicit ack, dedicated channel),
+NOT the shared middleware consumer: don't register the reminder event types with `consumer.registerHandler`
+and don't add an ack-then-republish retry — a crash during such a delay loses the job. Failure: first
+delivery -> requeue once (broker), redelivered -> dead-letter to `.dlq`. A dead-lettered legacy job still
+carries its stored headers: never replay it; inspect/handle only with owner approval. Don't reintroduce
+header capture into `jobs/reminderBatch.rabbit.js`, and never copy a header name/value into the quarantine
+record or a log — `tests/reminderServiceAuthority.p5.test.js`, `tests/reminderLegacyQuarantine.p5.test.js`
+and `tests/reminderExplicitAck.rabbit.it.test.js` pin this.

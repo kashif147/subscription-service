@@ -14,7 +14,7 @@ const {
 	handlePortalUserCreated,
 	handlePortalUserUpdated,
 } = require("./listeners/user.portal.listener");
-const { registerReminderBatchConsumers } = require("./listeners/reminderBatch.listener");
+const { registerReminderBatchConsumers, stopReminderBatchConsumers } = require("./listeners/reminderBatch.listener");
 const { registerRenewalBatchConsumers } = require("./listeners/renewalBatch.listener");
 const { registerMemberFinanceConsumers } = require("./listeners/memberFinance.listener");
 
@@ -151,6 +151,7 @@ async function setupConsumers() {
 }
 
 async function shutdownEventSystem() {
+	await stopReminderBatchConsumers();
 	await shutdown();
 }
 
