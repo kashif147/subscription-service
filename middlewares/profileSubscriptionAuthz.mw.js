@@ -3,9 +3,9 @@
  * `ensureAuthenticatedOrInternal` (which are not CRM-gated inside their controllers).
  *
  * Caller class comes from the VERIFIED identity only:
- *   - internal: the existing internal branch of ensureAuthenticatedOrInternal was taken
- *     (x-internal-request, which the gateway strips; that branch never sets req.user).
- *     Precedence is unchanged: in-network callers that also forward a user's headers stay internal.
+ *   - internal: the internal branch of ensureAuthenticatedOrInternal was taken
+ *     (x-internal-request, which the gateway strips, with NO user identity; that branch never sets
+ *     req.user). A caller that also forwards a user's Authorization / gateway headers is that user.
  *   - CRM:    req.user.userType === "CRM"
  *   - PORTAL: req.user.userType === "PORTAL"
  *   - anything else: denied (fail closed).

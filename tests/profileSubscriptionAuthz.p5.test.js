@@ -180,12 +180,12 @@ test("P5-8 unknown / missing userType is denied (fail closed)", async () => {
   }
 });
 
-test("P5-9 internal callers keep working (incl. those that also forward user headers)", async () => {
+test("P5-9 internal callers keep working (x-internal-request + trusted tenant, no user identity)", async () => {
   const { authz, pdpCalls, lookups } = setup();
   const variants = [
     {}, // user-service membershipCheck: x-internal-request + x-tenant-id only
-    { authorization: "Bearer x" }, // profile-service batch/corn-market/subscription client
-    { authorization: "Bearer x", "x-jwt-verified": "true", "x-auth-source": "gateway" }, // events-service
+    { authorization: "" }, // profile-service batch/corn-market send an empty Authorization when no user
+    { "x-correlation-id": "c-1" },
   ];
   for (const extraHeaders of variants) {
     const req = internalReq({ profileId: PROFILE_B, extraHeaders });
@@ -202,14 +202,48 @@ test("P5-9 internal callers keep working (incl. those that also forward user hea
   assert.deepStrictEqual(lookups, []);
 });
 
+test("P5-9b a caller that sends x-internal-request AND a user identity is never internal (P5 mixed identity)", () => {
+  const variants = [
+    { authorization: "Bearer x" }, // profile-service batch/corn-market/subscription client (today)
+    { authorization: "Bearer x", "x-jwt-verified": "true", "x-auth-source": "gateway" }, // events-service (today)
+    { authorization: "Bearer x", "x-user-id": "crm-1", "x-user-email": "e" }, // profile subscription client with req
+  ];
+  for (const extraHeaders of variants) {
+    const req = internalReq({ profileId: PROFILE_B, extraHeaders });
+    const res = makeRes();
+    let authed = 0;
+    ensureAuthenticatedOrInternal(req, res, () => { authed += 1; });
+    // unverifiable user identity -> 401 from the user path; never the internal branch
+    assert.equal(authed, 0, JSON.stringify(Object.keys(extraHeaders)));
+    assert.equal(res.statusCode, 401);
+  }
+});
+
 // ---- POST /internal/profile-merge ----
 
 test("P5-10 profile-merge: internal call (profile-service duplicate merge) is allowed", async () => {
   const { authz } = setup();
-  const req = internalReq({ extraHeaders: { authorization: "Bearer x", "x-user-id": "crm-1" } });
-  ensureAuthenticatedOrInternal(req, makeRes(), () => {});
+  const req = internalReq();
+  let authed = 0;
+  ensureAuthenticatedOrInternal(req, makeRes(), () => { authed += 1; });
+  assert.equal(authed, 1);
   const { nextCalls } = await run(authz.requireInternalOnly, req);
   assert.equal(nextCalls, 1);
+});
+
+test("P5-10b profile-merge: x-internal-request plus a forwarded user identity is not internal", async () => {
+  const { authz } = setup();
+  const req = internalReq({ extraHeaders: { authorization: "Bearer x", "x-user-id": "crm-1" } });
+  const res0 = makeRes();
+  let authed = 0;
+  ensureAuthenticatedOrInternal(req, res0, () => { authed += 1; });
+  assert.equal(authed, 0);
+  assert.equal(res0.statusCode, 401);
+  // even if a user identity were authenticated, requireInternalOnly refuses it
+  req.user = { id: "crm-1", userType: "CRM" };
+  const { res, nextCalls } = await run(authz.requireInternalOnly, req);
+  assert.equal(nextCalls, 0);
+  assert.equal(res.statusCode, 403);
 });
 
 test("P5-11 profile-merge: portal users never reach it (own or other profile, any permissions)", async () => {
