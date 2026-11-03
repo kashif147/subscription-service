@@ -9,3 +9,4 @@ require("./reminderBatch.model");
 require("./reminderBatchMember.model");
 require("./yearEndBatch.model");
 require("./yearEndBatchMember.model");
+require("./reminderJobQuarantine.model");

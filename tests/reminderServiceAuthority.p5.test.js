@@ -4,8 +4,8 @@
 //     (requireInternalOrFinanceRead -> requireFinanceReadStrict -> canFinanceRead), plus CRM.
 //  2. Queued REMINDER_BATCH_* payloads carry no user credential (no Authorization, no gateway headers).
 //  3. The worker runs with service authority only (createInternalWorkerReq) and never replays
-//     headers stored in a legacy payload; legacy credential-bearing payloads are refused (acked,
-//     not retried/dead-lettered, so the credential is not re-persisted).
+//     headers stored in a legacy payload; legacy credential-bearing payloads are refused after a
+//     durable credential-free quarantine record is written (see reminderLegacyQuarantine.p5.test.js).
 //  4. fetchReminderEligibilityBulk always sends internal-only headers, whatever req it is given.
 // No network, no DB: the publisher, the batch service and axios are stubbed.
 const test = require("node:test");
@@ -58,7 +58,7 @@ const CREDENTIAL_KEYS = [
 
 // ---- stubs -------------------------------------------------------------------------------------
 
-const calls = { publish: [], create: [], queued: [], build: [], execute: [], orchestrate: [], updateOne: [] };
+const calls = { publish: [], create: [], queued: [], build: [], execute: [], orchestrate: [], updateOne: [], quarantine: [] };
 const reset = () => Object.keys(calls).forEach((k) => (calls[k] = []));
 
 publisher.publish = async (...args) => {
@@ -91,6 +91,15 @@ ReminderBatch.updateOne = async (filter, update) => {
   calls.updateOne.push({ filter, update });
   return { matchedCount: 1, modifiedCount: 1 };
 };
+// Durable quarantine record (full behaviour in reminderLegacyQuarantine.p5.test.js).
+const ReminderJobQuarantine = require("../models/reminderJobQuarantine.model");
+ReminderJobQuarantine.findOneAndUpdate = (filter, update) => ({
+  lean: async () => {
+    calls.quarantine.push({ filter, update });
+    return { deliveryCount: 1 };
+  },
+});
+ReminderJobQuarantine.updateOne = async () => ({ matchedCount: 1, modifiedCount: 1 });
 
 // ---- HTTP harness (real router + real auth middleware) ------------------------------------------
 
@@ -420,7 +429,7 @@ test("W3 new build payload: build runs with the internal worker req", async () =
   assert.strictEqual(req.headers["x-internal-request"], "true");
 });
 
-test("W4 legacy credential-bearing build payload: refused (no build, no throw), queued batch marked failed", async () => {
+test("W4 legacy credential-bearing build payload: quarantined, refused (no build, no throw), queued batch marked failed", async () => {
   reset();
   const before = listener.getLegacyCredentialPayloadRefusals().build;
   const logged = [];
@@ -433,6 +442,7 @@ test("W4 legacy credential-bearing build payload: refused (no build, no throw), 
   }
   assert.strictEqual(calls.build.length, 0, "never processed with the stored identity");
   assert.strictEqual(listener.getLegacyCredentialPayloadRefusals().build, before + 1);
+  assert.strictEqual(calls.quarantine.length, 1, "durable record written");
   assert.strictEqual(calls.updateOne.length, 1);
   assert.deepStrictEqual(calls.updateOne[0].filter, { _id: BATCH, tenantId: A, status: "pending_build" });
   assert.strictEqual(calls.updateOne[0].update.$set.status, "failed");
@@ -440,7 +450,7 @@ test("W4 legacy credential-bearing build payload: refused (no build, no throw), 
   assert.ok(!JSON.stringify(logged).includes("crm-user-1"), "stored identity never logged");
 });
 
-test("W5 legacy execute / monthly-orchestrate payloads: refused (not processed, no throw, no status change)", async () => {
+test("W5 legacy execute / monthly-orchestrate payloads: quarantined, refused (not processed, no throw, no status change)", async () => {
   reset();
   const before = listener.getLegacyCredentialPayloadRefusals();
   const origWarn = console.warn;
@@ -456,12 +466,13 @@ test("W5 legacy execute / monthly-orchestrate payloads: refused (not processed, 
   assert.strictEqual(calls.execute.length, 0);
   assert.strictEqual(calls.orchestrate.length, 0);
   assert.strictEqual(calls.updateOne.length, 0);
+  assert.strictEqual(calls.quarantine.length, 2);
   const after = listener.getLegacyCredentialPayloadRefusals();
   assert.strictEqual(after.execute, before.execute + 1);
   assert.strictEqual(after.orchestrate, before.orchestrate + 1);
 });
 
-test("W6 legacy payload with a tenant mismatch: dropped without mutation and without throwing (no DLQ copy)", async () => {
+test("W6 legacy payload with a tenant mismatch: quarantined (tenant unresolved), no batch mutation, no throw", async () => {
   reset();
   const origWarn = console.warn;
   console.warn = () => {};
@@ -475,6 +486,10 @@ test("W6 legacy payload with a tenant mismatch: dropped without mutation and wit
     console.warn = origWarn;
   }
   assert.strictEqual(calls.build.length + calls.updateOne.length, 0);
+  assert.strictEqual(calls.quarantine.length, 1, "recorded, not silently dropped");
+  const ins = calls.quarantine[0].update.$setOnInsert;
+  assert.strictEqual(ins.tenantId, null);
+  assert.strictEqual(ins.tenantStatus, "mismatch");
 });
 
 test("W7 new payload with a tenant mismatch is still quarantined (throws -> retry/DLQ), nothing processed", async () => {

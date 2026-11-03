@@ -19,5 +19,8 @@ also require one of the exact finance-read claims account-service's reminder-eli
 admits (`middlewares/reminderBatchAuthz.mw.js`, source lines cited there). The jobs then run with
 subscription-service's internal service authority; queued RabbitMQ payloads never carry the user's
 Authorization or gateway identity headers, and the worker never replays headers from a payload
-(legacy payloads that contain `data.headers` are refused, not processed). Don't reintroduce header
-capture into `jobs/reminderBatch.rabbit.js` — `tests/reminderServiceAuthority.p5.test.js` pins this.
+(legacy payloads that contain `data.headers` are refused, not processed, after a credential-free
+`reminder_job_quarantine` record is written; a failed write throws so the job is retried/dead-lettered,
+never acked as handled). Don't reintroduce header capture into `jobs/reminderBatch.rabbit.js`, and never
+copy a header name/value into the quarantine record or a log — `tests/reminderServiceAuthority.p5.test.js`
+and `tests/reminderLegacyQuarantine.p5.test.js` pin this.

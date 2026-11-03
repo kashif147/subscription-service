@@ -8,6 +8,8 @@ const ReminderBatchMember = require("../../models/reminderBatchMember.model");
 const { REMINDER_BATCH_STATUS } = require("../../constants/enums");
 const Subscription = require("../../models/subscription.model");
 const { createInternalWorkerReq } = require("../../helpers/serviceClient");
+const ReminderJobQuarantine = require("../../models/reminderJobQuarantine.model");
+const crypto = require("crypto");
 
 function eventData(payload) {
   return payload?.data && typeof payload.data === "object"
@@ -40,13 +42,20 @@ function buildWorkerReq(payload) {
  * request headers - bearer token and gateway identity - under `data.headers`. Such a job was queued
  * WITHOUT the trigger-time permission check (the only finance gate was account-service evaluating the
  * replayed identity), so running it now with service authority would execute work whose requester was
- * never authorized, and replaying the identity is the defect being removed. Decision: REFUSE.
- *   - never replayed, never processed, never re-published;
- *   - the handler RETURNS (message acked): throwing would retry (republish) and finally dead-letter the
- *     message, i.e. write the credential to the DLQ again;
- *   - build: a still-queued batch (status pending_build, tenant-scoped) is marked failed so the CRM
- *     user can simply re-run the build; execute / monthly-orchestrate: no state change (re-trigger);
- *   - a safe counter + warning with no header names or values and no stored identity.
+ * never authorized, and replaying the identity is the defect being removed. Decision: REFUSE, durably.
+ *   1. QUARANTINE FIRST: a credential-free record (models/reminderJobQuarantine.model.js) is upserted
+ *      on a dedupe key (event id, else a hash of the non-credential fields). Only the job kind, tenant,
+ *      batch ids, verified actor id, correlation id and presence flags are stored - never a header name
+ *      or value, a token, a gateway identity or an email. Redelivery updates the same record.
+ *   2. build: a still-queued batch (status pending_build, tenant-scoped) is then marked failed so the
+ *      CRM user can re-run the build; execute / monthly-orchestrate: no state change (re-trigger).
+ *   3. Only when 1 (and 2) succeeded does the handler return, so the middleware acks the message.
+ *      If the record (or the batch update) cannot be written the handler THROWS: the message is never
+ *      acked as handled. rabbitmq-middleware (db70fb8) then republishes it with x-retry-count up to
+ *      maxRetries (3) and finally nack(requeue=false) -> subscription-service.reminder-batch.jobs.dlq.
+ *      Bounded; never requeue=true; the business work is not lost silently.
+ *   - never replayed, never processed, never re-published by this service;
+ *   - logs carry kind, event id, tenant-resolved flag and delivery count only.
  */
 const legacyCredentialPayloadRefusals = { build: 0, execute: 0, orchestrate: 0 };
 
@@ -62,27 +71,114 @@ function isLegacyCredentialPayload(payload) {
 const LEGACY_REFUSED_MESSAGE =
   "Queued request predates the service-authority migration and was not processed; re-run it from the CRM";
 
-async function refuseLegacyCredentialPayload(kind, payload) {
-  legacyCredentialPayloadRefusals[kind] += 1;
-  const data = eventData(payload);
-  let tenantId = null;
+const EVENT_TYPE_BY_KIND = {
+  build: MEMBERSHIP_EVENTS.REMINDER_BATCH_BUILD_REQUESTED,
+  execute: MEMBERSHIP_EVENTS.REMINDER_BATCH_EXECUTE_REQUESTED,
+  orchestrate: MEMBERSHIP_EVENTS.REMINDER_BATCH_MONTHLY_ORCHESTRATE_REQUESTED,
+};
+const ID_FIELDS_BY_KIND = {
+  build: ["batchId"],
+  execute: ["batchId"],
+  orchestrate: ["cancellationBatchId", "reminderBatchId"],
+};
+const SAFE_TOKEN = /^[A-Za-z0-9._:-]{1,128}$/;
+// Payload keys that are expected in a legacy job and are either stored (ids) or summarised (flags).
+const KNOWN_LEGACY_KEYS = new Set([
+  "tenantId", "batchId", "cancellationBatchId", "reminderBatchId", "actorUserId", "actorEmail",
+  "correlationId", "headers",
+]);
+
+function safeToken(v) {
+  const s = v == null ? "" : String(v).trim();
+  return SAFE_TOKEN.test(s) ? s : null;
+}
+
+function legacyTenant(payload) {
   try {
-    tenantId = resolveEventTenant(payload);
-  } catch (_e) {
-    tenantId = null; // mismatch/missing: drop without any mutation (and without a DLQ copy)
+    return { tenantId: resolveEventTenant(payload), tenantStatus: "resolved" };
+  } catch (e) {
+    return { tenantId: null, tenantStatus: e?.code === "EVENT_TENANT_MISMATCH" ? "mismatch" : "missing" };
   }
-  console.warn("[reminder-batch] LegacyCredentialPayloadRefused", {
+}
+
+/** Presence flags only: what the refused payload carried. Never names or values. */
+function carriedFlags(data) {
+  const h = data?.headers && typeof data.headers === "object" ? data.headers : {};
+  const present = Object.entries(h)
+    .filter(([, v]) => v != null && v !== "")
+    .map(([k]) => String(k).toLowerCase());
+  const has = (re) => present.some((k) => re.test(k));
+  return {
+    storedRequestContext: true,
+    credential: has(/^authorization$/) || has(/^cookie$/),
+    gatewayIdentity: has(/^x-(user|jwt|auth|gateway|platform)-/),
+    tenantHeader: has(/^x-tenant-id$/),
+    internalFlag: has(/^x-internal-request$/),
+    actorPii: Boolean(data?.actorEmail),
+    otherFieldCount: Object.keys(data || {}).filter((k) => !KNOWN_LEGACY_KEYS.has(k)).length,
+  };
+}
+
+/** The credential-free quarantine record for a refused legacy job (exported for tests). */
+function buildQuarantineRecord(kind, payload) {
+  const data = eventData(payload) || {};
+  const { tenantId, tenantStatus } = legacyTenant(payload);
+  const ids = {};
+  const invalidIdFields = [];
+  for (const f of ID_FIELDS_BY_KIND[kind]) {
+    const v = data[f];
+    if (v == null || v === "") ids[f] = null;
+    else if (mongoose.Types.ObjectId.isValid(String(v)) && /^[a-f0-9]{24}$/i.test(String(v))) ids[f] = String(v);
+    else {
+      ids[f] = null;
+      invalidIdFields.push(f);
+    }
+  }
+  const eventId = safeToken(payload?.eventId);
+  const correlationId = safeCorrelationId(data?.correlationId || payload?.correlationId);
+  const actorUserId = safeToken(data?.actorUserId);
+  const basis = { kind, eventId, tenantId, tenantStatus, ...ids, actorUserId, correlationId };
+  const dedupeKey = eventId
+    ? `evt:${kind}:${eventId}`
+    : `sha:${crypto.createHash("sha256").update(JSON.stringify(basis)).digest("hex")}`;
+  return {
+    dedupeKey,
+    reason: "LEGACY_CREDENTIAL_PAYLOAD",
     kind,
-    eventId: payload?.eventId || null,
-    tenantResolved: Boolean(tenantId),
-    refusedTotal: legacyCredentialPayloadRefusals[kind],
-  });
-  if (kind !== "build" || !tenantId) return;
-  const batchId = data?.batchId;
-  if (!batchId || !mongoose.Types.ObjectId.isValid(String(batchId))) return;
-  try {
-    await ReminderBatch.updateOne(
-      { _id: String(batchId), tenantId, status: REMINDER_BATCH_STATUS.PENDING_BUILD },
+    eventType: EVENT_TYPE_BY_KIND[kind],
+    eventId,
+    correlationId,
+    tenantId,
+    tenantStatus,
+    batchId: ids.batchId ?? null,
+    cancellationBatchId: ids.cancellationBatchId ?? null,
+    reminderBatchId: ids.reminderBatchId ?? null,
+    actorUserId,
+    invalidIdFields,
+    carried: carriedFlags(data),
+  };
+}
+
+async function refuseLegacyCredentialPayload(kind, payload) {
+  const record = buildQuarantineRecord(kind, payload);
+  const now = new Date();
+  // 1. Durable, credential-free record BEFORE anything else. Throws -> no ack (see above).
+  const { dedupeKey, ...insertFields } = record;
+  const stored = await ReminderJobQuarantine.findOneAndUpdate(
+    { dedupeKey },
+    {
+      $setOnInsert: { ...insertFields, firstSeenAt: now, status: "quarantined" },
+      $set: { lastSeenAt: now },
+      $inc: { deliveryCount: 1 },
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  ).lean();
+
+  // 2. build: fail the still-queued batch so the CRM user can re-run it. Throws -> no ack; the
+  //    redelivery updates the same quarantine record and retries this step.
+  if (kind === "build" && record.tenantId && record.batchId) {
+    const r = await ReminderBatch.updateOne(
+      { _id: record.batchId, tenantId: record.tenantId, status: REMINDER_BATCH_STATUS.PENDING_BUILD },
       {
         $set: {
           status: REMINDER_BATCH_STATUS.FAILED,
@@ -91,12 +187,18 @@ async function refuseLegacyCredentialPayload(kind, payload) {
         },
       }
     );
-  } catch (err) {
-    console.warn("[reminder-batch] legacy build refusal: batch status not updated", {
-      eventId: payload?.eventId || null,
-      message: err?.message || String(err),
-    });
+    if (r?.modifiedCount) {
+      await ReminderJobQuarantine.updateOne({ dedupeKey }, { $set: { batchMarkedFailed: true } });
+    }
   }
+
+  legacyCredentialPayloadRefusals[kind] += 1;
+  console.warn("[reminder-batch] LegacyCredentialPayloadQuarantined", {
+    kind,
+    eventId: record.eventId,
+    tenantResolved: record.tenantStatus === "resolved",
+    deliveryCount: stored?.deliveryCount ?? null,
+  });
 }
 
 async function handleReminderBuildRequested(payload) {
@@ -243,4 +345,5 @@ module.exports = {
   handleReminderMonthlyOrchestrateRequested,
   buildWorkerReq,
   getLegacyCredentialPayloadRefusals,
+  buildQuarantineRecord,
 };
