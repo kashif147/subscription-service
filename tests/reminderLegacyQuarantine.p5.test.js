@@ -5,9 +5,8 @@
 //  - the record and the log output never carry a header name or value, a token, a gateway identity or
 //    an email (synthetic sentinel values below);
 //  - if the record (or the build's batch-status update) cannot be written the handler throws, and the
-//    real rabbitmq-middleware consumer (db70fb8) never takes the success ack: it republishes the
-//    identical message with an incremented x-retry-count (bounded by maxRetries) and on the last attempt
-//    nack(requeue=false) -> DLQ. requeue=true is never used.
+//    explicit-ack adapter never acks: first delivery -> nack(requeue=true) (one broker redelivery),
+//    redelivered -> nack(requeue=false) -> broker DLQ. No in-memory republish, no loop.
 // No network, no DB: the models and the batch service are stubbed in memory.
 const test = require("node:test");
 const assert = require("node:assert");
@@ -271,7 +270,9 @@ test("Q9 a new (credential-free) payload is processed and never quarantined", as
   assert.strictEqual(store.size, 0);
 });
 
-// ---- real rabbitmq-middleware consumer: ack / nack semantics ------------------------------------
+// ---- explicit-ack adapter (rabbitMQ/explicitAckConsumer.js): ack / nack semantics ---------------
+
+const { handleDelivery } = require("../rabbitMQ/explicitAckConsumer");
 
 function fakeChannel() {
   const ch = { acks: 0, nacks: [], published: [] };
@@ -281,64 +282,145 @@ function fakeChannel() {
   return ch;
 }
 
-function amqpMessage(payload, retryCount) {
+function amqpMessage(payload, { redelivered = false, eventType = MEMBERSHIP_EVENTS.REMINDER_BATCH_BUILD_REQUESTED } = {}) {
   return {
-    content: Buffer.from(JSON.stringify({ eventType: MEMBERSHIP_EVENTS.REMINDER_BATCH_BUILD_REQUESTED, ...payload })),
-    fields: { routingKey: MEMBERSHIP_EVENTS.REMINDER_BATCH_BUILD_REQUESTED, exchange: "membership.events", redelivered: false },
-    properties: { headers: retryCount == null ? {} : { "x-retry-count": retryCount } },
+    content: Buffer.from(JSON.stringify({ eventType, ...payload })),
+    fields: { routingKey: eventType, exchange: "membership.events", redelivered },
+    properties: { headers: {} },
   };
 }
 
-async function viaConsumer(payload, retryCount) {
+async function viaAdapter(payload, opts) {
   const ch = fakeChannel();
   const logged = [];
   const sink = (...a) => logged.push(a);
-  const prev = { logger: consumer.logger, delay: consumer.retryDelay };
-  consumer.setLogger({ info: sink, warn: sink, error: sink, debug: sink });
-  consumer.retryDelay = 0;
-  consumer.registerHandler(MEMBERSHIP_EVENTS.REMINDER_BATCH_BUILD_REQUESTED, listener.handleReminderBuildRequested);
   const logs = captureLogs();
+  let outcome;
   try {
-    await consumer.handleMessage(amqpMessage(payload, retryCount), ch, "subscription-service.reminder-batch.jobs");
-    await new Promise((r) => setTimeout(r, 5)); // let the middleware's delayed republish fire
+    outcome = await handleDelivery(amqpMessage(payload, opts), ch, listener.reminderJobHandlers(), { info: sink, warn: sink, error: sink });
+    await new Promise((r) => setTimeout(r, 5)); // nothing may fire later (no timers)
   } finally {
     logs.restore();
-    consumer.setLogger(prev.logger);
-    consumer.retryDelay = prev.delay;
   }
-  return { ch, logged: [...logged, ...logs.lines] };
+  return { ch, outcome, logged: [...logged, ...logs.lines] };
 }
 
-test("M1 record written -> middleware acks once, no nack, no republish", async () => {
+test("E1 record written -> exactly one ack, no nack, no republish", async () => {
   reset();
-  const { ch, logged } = await viaConsumer(legacy({ batchId: BATCH }));
+  const { ch, outcome, logged } = await viaAdapter(legacy({ batchId: BATCH }));
+  assert.strictEqual(outcome, "ack");
   assert.strictEqual(store.size, 1);
   assert.strictEqual(ch.acks, 1);
   assert.deepStrictEqual(ch.nacks, []);
   assert.strictEqual(ch.published.length, 0);
-  assertCredentialFree(logged, "middleware + service logs");
+  assertCredentialFree(logged, "adapter + service logs");
 });
 
-test("M2 record write fails on the final attempt -> ack NEVER called, nack(requeue=false) once (DLQ)", async () => {
+test("E2 record write fails on first delivery -> NO ack, one nack(requeue=true) (broker keeps the job), no copy", async () => {
   reset();
   failQuarantine = true;
-  const { ch } = await viaConsumer(legacy({ batchId: BATCH }), consumer.maxRetries);
-  assert.strictEqual(ch.acks, 0, "original job never acknowledged");
+  const { ch, outcome, logged } = await viaAdapter(legacy({ batchId: BATCH }));
+  assert.strictEqual(outcome, "requeue");
+  assert.strictEqual(ch.acks, 0, "original delivery never acknowledged");
+  assert.deepStrictEqual(ch.nacks, [{ allUpTo: false, requeue: true }]);
+  assert.strictEqual(ch.published.length, 0, "no in-memory republish");
+  assert.strictEqual(store.size + work.build, 0);
+  assertCredentialFree(logged, "failure logs");
+});
+
+test("E3 record write fails on the redelivery -> NO ack, nack(requeue=false) exactly once -> broker DLQ (bounded, no loop)", async () => {
+  reset();
+  failQuarantine = true;
+  const { ch, outcome } = await viaAdapter(legacy({ batchId: BATCH }), { redelivered: true });
+  assert.strictEqual(outcome, "dead-letter");
+  assert.strictEqual(ch.acks, 0);
   assert.deepStrictEqual(ch.nacks, [{ allUpTo: false, requeue: false }]);
   assert.strictEqual(ch.published.length, 0);
-  assert.strictEqual(store.size + work.build, 0);
 });
 
-test("M3 record write fails before the last attempt -> bounded retry: identical message republished with x-retry-count+1, never requeue=true", async () => {
+test("E4 batch update fails after the record -> no ack; redelivery then succeeds with ONE record (deliveryCount 2)", async () => {
   reset();
-  failQuarantine = true;
-  const original = legacy({ batchId: BATCH });
-  const { ch } = await viaConsumer(original, 1);
-  assert.strictEqual(ch.nacks.filter((n) => n.requeue === true).length, 0);
-  assert.strictEqual(ch.published.length, 1, "job carried forward, not dropped");
-  assert.strictEqual(ch.published[0].props.headers["x-retry-count"], 2);
-  assert.deepStrictEqual(JSON.parse(ch.published[0].content.toString()).data, original.data);
-  assert.ok(consumer.maxRetries >= 1 && Number.isFinite(consumer.maxRetries), "bounded");
+  failBatch = true;
+  const first = await viaAdapter(legacy({ batchId: BATCH }));
+  assert.strictEqual(first.ch.acks, 0);
+  assert.deepStrictEqual(first.ch.nacks, [{ allUpTo: false, requeue: true }]);
+  failBatch = false;
+  const second = await viaAdapter(legacy({ batchId: BATCH }), { redelivered: true });
+  assert.strictEqual(second.ch.acks, 1);
+  assert.strictEqual(store.size, 1);
+  assert.strictEqual([...store.values()][0].deliveryCount, 2);
+});
+
+test("E5 duplicate delivery of an already-quarantined job -> one record, both deliveries acked once each", async () => {
+  reset();
+  const a = await viaAdapter(legacy({ batchId: BATCH }));
+  const b = await viaAdapter(legacy({ batchId: BATCH }), { redelivered: true });
+  assert.strictEqual(a.ch.acks + b.ch.acks, 2);
+  assert.strictEqual(store.size, 1);
+});
+
+test("E6 new (credential-free) job processed -> one ack; never quarantined", async () => {
+  reset();
+  const { ch } = await viaAdapter({ tenantId: A, data: { tenantId: A, batchId: BATCH, actorUserId: "actor-1" } });
+  assert.strictEqual(ch.acks, 1);
+  assert.strictEqual(work.build, 1);
+  assert.strictEqual(store.size, 0);
+});
+
+test("E7 unparseable body / unknown event type -> dead-lettered, never acked away", async () => {
+  const ch = fakeChannel();
+  const bad = { content: Buffer.from("{not json"), fields: { redelivered: false }, properties: {} };
+  assert.strictEqual(await handleDelivery(bad, ch, listener.reminderJobHandlers(), { error() {}, warn() {} }), "dead-letter");
+  const ch2 = fakeChannel();
+  const unk = amqpMessage({ data: {} }, { eventType: "something.else.v1" });
+  assert.strictEqual(await handleDelivery(unk, ch2, listener.reminderJobHandlers(), { error() {}, warn() {} }), "dead-letter");
+  assert.strictEqual(ch.acks + ch2.acks, 0);
+  assert.deepStrictEqual([...ch.nacks, ...ch2.nacks], [{ allUpTo: false, requeue: false }, { allUpTo: false, requeue: false }]);
+});
+
+test("E8 handler still running when the process dies -> nothing settled (broker redelivers)", async () => {
+  reset();
+  const ch = fakeChannel();
+  let release;
+  const gate = new Promise((r) => (release = r));
+  const handlers = { [MEMBERSHIP_EVENTS.REMINDER_BATCH_BUILD_REQUESTED]: async () => gate };
+  const pending = handleDelivery(amqpMessage(legacy({ batchId: BATCH })), ch, handlers, { warn() {}, error() {} });
+  await new Promise((r) => setTimeout(r, 10));
+  assert.strictEqual(ch.acks + ch.nacks.length, 0, "no early ack before the handler completes");
+  release();
+  await pending;
+});
+
+test("E9 registration: dedicated channel, bounded prefetch, noAck=false, reminder types NOT in the shared handler map", async () => {
+  const { connectionManager } = require("@projectShell/rabbitmq-middleware");
+  const calls = { prefetch: [], consume: [], createQueue: [], bind: [] };
+  const fakeCh = {
+    prefetch: async (n) => void calls.prefetch.push(n),
+    consume: async (q, _fn, o) => (calls.consume.push({ q, o }), { consumerTag: "t1" }),
+    on() {},
+    cancel: async () => {},
+    close: async () => {},
+  };
+  const saved = { connect: connectionManager.connect, createQueue: consumer.createQueue, bindQueue: consumer.bindQueue };
+  connectionManager.connect = async () => ({ connection: { createChannel: async () => fakeCh }, channel: {} });
+  consumer.createQueue = async (q, o) => void calls.createQueue.push({ q, o });
+  consumer.bindQueue = async (q, ex, keys) => void calls.bind.push({ q, ex, keys });
+  try {
+    await listener.registerReminderBatchConsumers();
+    await listener.stopReminderBatchConsumers();
+  } finally {
+    Object.assign(connectionManager, { connect: saved.connect });
+    consumer.createQueue = saved.createQueue;
+    consumer.bindQueue = saved.bindQueue;
+  }
+  assert.deepStrictEqual(calls.createQueue, [{ q: listener.REMINDER_JOBS_QUEUE, o: { durable: true } }], "queue + DLX binding via the shared createQueue, unchanged");
+  assert.deepStrictEqual(calls.prefetch, [listener.REMINDER_JOBS_PREFETCH]);
+  assert.ok(listener.REMINDER_JOBS_PREFETCH >= 1 && listener.REMINDER_JOBS_PREFETCH <= 10);
+  assert.deepStrictEqual(calls.consume, [{ q: listener.REMINDER_JOBS_QUEUE, o: { noAck: false } }]);
+  for (const t of Object.keys(listener.reminderJobHandlers())) {
+    assert.strictEqual(consumer.handlers.has(t), false, `${t} must not be in the shared handler map`);
+  }
+  assert.strictEqual(Object.keys(listener.reminderJobHandlers()).length, 4);
 });
 
 test("Q10 the real schema accepts exactly the built record and rejects any extra (e.g. header) field", () => {
