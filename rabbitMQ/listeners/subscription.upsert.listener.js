@@ -205,6 +205,8 @@ async function publishSubscriptionCurrentUpdatedEvent({
   processingDate,
   submissionDate,
   applicationDate,
+  origin,
+  applicantIdentity,
 }) {
   const resolvedMemberId = await resolveMemberIdForPublish(
     profileIdObjectId,
@@ -230,6 +232,8 @@ async function publishSubscriptionCurrentUpdatedEvent({
     processingDate,
     submissionDate,
     applicationDate,
+    origin,
+    applicantIdentity,
   });
 }
 
@@ -338,6 +342,7 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       paymentFrequency = null,
       userId = null,
       userEmail = null,
+      applicantIdentity = null,
       isCurrent: payloadIsCurrent = undefined,
       deactivatePreviousSubscriptionStatus = null,
       membershipMovement: payloadMembershipMovement = null,
@@ -371,6 +376,14 @@ async function handleSubscriptionUpsertRequested(payload, context) {
       userId != null && String(userId).trim() !== ""
         ? String(userId).trim()
         : null;
+
+    // P5: trigger context for the current.updated event, from THIS upsert event (never from a
+    // stored subscription applicationId): an upsert carrying an applicationId is an application
+    // approval; one without is a profile-level upsert (e.g. CRM user flow).
+    const promotionOrigin =
+      applicationId != null && String(applicationId).trim() !== ""
+        ? "application_upsert"
+        : "profile_upsert";
 
     // Validate required fields
     if (!profileId) {
@@ -551,6 +564,8 @@ async function handleSubscriptionUpsertRequested(payload, context) {
             processingDate,
             submissionDate,
             applicationDate,
+            origin: promotionOrigin,
+            applicantIdentity,
           });
         }
 
@@ -895,6 +910,8 @@ async function handleSubscriptionUpsertRequested(payload, context) {
         processingDate,
         submissionDate,
         applicationDate,
+        origin: promotionOrigin,
+        applicantIdentity,
       });
     }
 

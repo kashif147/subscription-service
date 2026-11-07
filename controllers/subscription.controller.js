@@ -1294,6 +1294,7 @@ async function runUndoResignMembershipBySubscriptionId(req, res, subscriptionIdS
         tenantId: updatedResigned.tenantId || req.tenantId,
         userId: updatedResigned.userId ?? null,
         skipMembershipProcessedNotification: true,
+        origin: "undo_resignation",
       });
       if (!cur.success) {
         console.error(
@@ -1689,6 +1690,7 @@ async function undoCancelMembership(req, res) {
       const cur = await publishSubscriptionCurrentUpdated(updatedCancelled, {
         tenantId: updatedCancelled.tenantId || req.tenantId,
         userId: updatedCancelled.userId ?? null,
+        origin: "undo_cancellation",
       });
       if (!cur.success) {
         console.error(

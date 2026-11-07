@@ -417,6 +417,7 @@ async function runUndergraduateGraduationCancellationOnce(options = {}) {
           membershipCategory: updated.membershipCategory,
           userId: updated.userId || null,
           correlationId: `ugrad-grad-${correlationId}`,
+          origin: "ug_graduation_cancellation",
         });
       } catch (e) {
         logStructured({

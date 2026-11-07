@@ -2,6 +2,21 @@ const { publisher } = require("@projectShell/rabbitmq-middleware");
 const { MEMBERSHIP_EVENTS } = require("../events");
 
 /**
+ * P5 identity: the application approval's applicant identity (profile-service
+ * { source, verified, pending }), passed through unchanged in meaning so user-service can apply
+ * the same MEMBER-grant rule on this event as on applications.review.processed.v1.
+ * Anything that is not an object -> null (absent).
+ */
+function normalizeApplicantIdentity(ai) {
+  if (!ai || typeof ai !== "object" || Array.isArray(ai)) return null;
+  return {
+    source: typeof ai.source === "string" && ai.source ? ai.source : null,
+    verified: ai.verified === true,
+    pending: typeof ai.pending === "string" && ai.pending ? ai.pending : null,
+  };
+}
+
+/**
  * Publishes members.subscription.current.updated.v1 (profile-service syncs Profile.currentSubscriptionId).
  * @param {object} subscriptionDoc - Mongoose doc or lean object with _id, profileId, startDate
  * @param {object} [ctx] - optional overrides from the triggering event / request
@@ -92,6 +107,15 @@ async function publishSubscriptionCurrentUpdated(subscriptionDoc, ctx = {}) {
     },
     subscriptionAttributes,
   };
+  // P5: trusted trigger context for user-service MEMBER promotion. origin names the code path
+  // that published (set by every caller); applicantIdentity only on application-driven upserts.
+  if (typeof ctx.origin === "string" && ctx.origin) {
+    eventPayload.origin = ctx.origin;
+  }
+  const applicantIdentity = normalizeApplicantIdentity(ctx.applicantIdentity);
+  if (applicantIdentity) {
+    eventPayload.applicantIdentity = applicantIdentity;
+  }
   if (subscriptionDoc.membershipMovement || ctx.membershipMovement) {
     eventPayload.membershipMovement =
       ctx.membershipMovement || subscriptionDoc.membershipMovement;
@@ -150,4 +174,4 @@ async function publishSubscriptionCurrentUpdated(subscriptionDoc, ctx = {}) {
   return publishResult;
 }
 
-module.exports = { publishSubscriptionCurrentUpdated };
+module.exports = { publishSubscriptionCurrentUpdated, normalizeApplicantIdentity };
