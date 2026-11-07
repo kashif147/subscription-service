@@ -888,6 +888,7 @@ async function processRenewalBatchExecute(batchId, tenantId) {
         userId: newSub.userId,
         processingDate: processingDateISO,
         renewalBatchId: batch._id,
+        origin: "renewal_batch",
       });
       await publishYearEndReportingSnapshot(newSub, row, {
         tenantId: batch.tenantId,

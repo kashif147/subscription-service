@@ -240,6 +240,7 @@ async function runPostgraduateStudentCategoryRenewalOnce() {
         tenantId: doc.tenantId,
         correlationId: `postgrad-renewal-${adjustmentKey}`,
         skipMembershipProcessedNotification: true,
+        origin: "postgrad_category_renewal",
       });
     } catch (e) {
       console.error(

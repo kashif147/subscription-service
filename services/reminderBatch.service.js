@@ -996,6 +996,7 @@ async function processExecuteMemberChunk({
       await publishSubscriptionCurrentUpdated(sub, {
         tenantId: sub.tenantId || tenantId,
         memberId: m.memberId,
+        origin: "reminder_batch",
       });
     } else if (batch.kind === REMINDER_BATCH_KIND.CANCELLATION) {
       if (m.tier !== REMINDER_BATCH_TIER.CANCEL) continue;
@@ -1072,6 +1073,7 @@ async function processExecuteMemberChunk({
       await publishSubscriptionCurrentUpdated(sub, {
         tenantId: sub.tenantId || tenantId,
         memberId: m.memberId,
+        origin: "reminder_batch",
       });
     }
   }
