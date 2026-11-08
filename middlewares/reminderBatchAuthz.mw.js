@@ -22,6 +22,12 @@
  * already refused and nothing is granted or removed by that part.
  *
  * Literal match only: no case folding, trimming or new aliases. Grants nothing new.
+ *
+ * P6 (2026-11-08): accounts.reports:read / accounts.reports:* are REMOVED. They are a reporting code (held by IRO
+ * and the portal MEMBER role), not a finance-data grant: account-service's literal FINANCE_DATA_READ_CLAIMS
+ * (src/middlewares/financePermission.middleware.js) never accepted them, and the reminder-eligibility routes move
+ * to that list / internal-only in the same P6 change. The set below is pinned equal to account's list by
+ * tests/reminderTriggerClaims.p6.test.js.
  */
 const { USER_TYPE } = require("../constants/enums");
 
@@ -32,8 +38,6 @@ const REMINDER_BATCH_TRIGGER_CLAIMS = Object.freeze([
   "payments:read",
   "accounts.admin:*",
   "accounts.admin:read",
-  "accounts.reports:*",
-  "accounts.reports:read",
 ]);
 
 /** Permissions from the authenticated identity only (never body/query). */
@@ -67,7 +71,7 @@ function requireReminderBatchTrigger(req, res, next) {
     return res.status(403).json({
       status: "fail",
       code: "FINANCE_READ_REQUIRED",
-      data: "Finance read permission required (payments:read, accounts.admin:read or accounts.reports:read)",
+      data: "Finance read permission required (payments:read or accounts.admin:read)",
     });
   }
   return next();

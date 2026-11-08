@@ -62,6 +62,50 @@ function ensureYearEndAccess(req, res) {
   return false;
 }
 
+// P6 (2026-11-08): create / execute change subscriptions for the whole tenant and post member write-offs to
+// account-service, so they need a finance action authority, not just a write claim: a verified CRM caller who is
+// the tenant administrator (ASU: the "*" claim or the ASU role), or who holds an AM / DAM role AND the literal
+// subscriptions:write or payments:write claim (the same shape as account-service requireFinanceWrite). MO, REO and
+// other holders of subscriptions:write / payments:write are refused. The read routes keep ensureYearEndAccess.
+const YEAR_END_FINANCE_ROLES = new Set([
+  "am",
+  "accounts manager",
+  "account manager",
+  "dam",
+  "deputy accounts manager",
+  "deputy account manager",
+]);
+
+function requestRoles(req) {
+  return Array.isArray(req.roles) ? req.roles : Array.isArray(req.user?.roles) ? req.user.roles : [];
+}
+
+function requestPermissions(req) {
+  return Array.isArray(req.permissions)
+    ? req.permissions
+    : Array.isArray(req.user?.permissions)
+      ? req.user.permissions
+      : [];
+}
+
+function canMutateYearEnd(req) {
+  const permissions = requestPermissions(req);
+  if (permissions.includes("*") || hasTenantAdminRole(req)) return true;
+  const hasFinanceRole = requestRoles(req).map(normalizeRoleValue).some((r) => YEAR_END_FINANCE_ROLES.has(r));
+  return hasFinanceRole && (permissions.includes("subscriptions:write") || permissions.includes("payments:write"));
+}
+
+function ensureYearEndMutationAccess(req, res) {
+  if (!ensureCrm(req, res)) return false;
+  if (canMutateYearEnd(req)) return true;
+  res.status(403).json({
+    status: "fail",
+    code: "YEAR_END_FINANCE_AUTHORITY_REQUIRED",
+    data: "Access denied. Creating or executing a year-end renewal requires the tenant administrator (ASU), or an Accounts Manager / Deputy Accounts Manager with subscriptions:write or payments:write.",
+  });
+  return false;
+}
+
 function handleError(res, err) {
   if (err instanceof AppError) {
     return res.status(err.status).json({ status: "fail", data: err.message });
@@ -71,7 +115,7 @@ function handleError(res, err) {
 }
 
 async function postCreate(req, res) {
-  if (!ensureYearEndAccess(req, res)) return;
+  if (!ensureYearEndMutationAccess(req, res)) return;
   try {
     const data = await renewalBatchService.createRenewalBatch(req, req.body || {});
     return res.status(201).json({ status: "success", data });
@@ -117,7 +161,7 @@ async function getByYear(req, res) {
 }
 
 async function postExecute(req, res) {
-  if (!ensureYearEndAccess(req, res)) return;
+  if (!ensureYearEndMutationAccess(req, res)) return;
   try {
     const data = await renewalBatchService.requestExecuteRenewalBatch(
       req,

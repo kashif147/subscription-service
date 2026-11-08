@@ -31,9 +31,10 @@ const serviceClient = require("../helpers/serviceClient");
 const reminderBatchRabbit = require("../jobs/reminderBatch.rabbit.js");
 const listener = require("../rabbitMQ/listeners/reminderBatch.listener");
 
-// The exact user claim set account-service admits on POST /internal/members/reminder-eligibility-bulk
-// today (account 4357493 financePermission.middleware.js canFinanceRead + financePermissions.js
-// hasFinancePermission wildcard/alias expansion).
+// The user claim set admitted for the reminder trigger. P6 (2026-11-08): account-service's literal
+// FINANCE_DATA_READ_CLAIMS (src/middlewares/financePermission.middleware.js) - accounts.reports:* / accounts.reports:read
+// were removed (a reporting code, not a finance-data grant); the refusal is covered by
+// tests/yearEndReminderGuards.p6.test.js.
 const ACCOUNT_BULK_CLAIMS = [
   "*",
   "admin",
@@ -41,8 +42,6 @@ const ACCOUNT_BULK_CLAIMS = [
   "payments:read",
   "accounts.admin:*",
   "accounts.admin:read",
-  "accounts.reports:*",
-  "accounts.reports:read",
 ];
 
 const CREDENTIAL_KEYS = [
