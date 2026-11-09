@@ -19,7 +19,7 @@ const req = ({ userType = "CRM", roles = [], permissions = [] }) => ({
 // Real-PDP-like stub: CRM audience; ASU own-tenant rule; otherwise the exact claim.
 const realisticPdp = (calls) => (resource, action) => (r, res, next) => {
   calls.push(`${resource}:${action}`);
-  const ok = r.user?.userType === "CRM" && ((r.roles || []).includes("ASU") || (r.permissions || []).includes(`${resource}:${action}`) || (r.permissions || []).includes("*"));
+  const ok = r.user?.userType === "CRM" && ((r.roles || []).some((x) => (x?.code || x) === "ASU") || (r.permissions || []).includes(`${resource}:${action}`) || (r.permissions || []).includes("*"));
   return ok ? next() : res.status(403).json({ code: "PERMISSION_DENIED" });
 };
 // Simulates any PDP PERMIT (e.g. a role that still carries the code): the local guard must still hold.
@@ -40,6 +40,8 @@ const CALLERS = {
   "ASU + REO (no claims)": [{ roles: ["ASU", "REO"] }, true],
   "ASU + BO/IRO/REO/RO with *": [{ roles: ["ASU", "BO", "IRO", "REO", "RO"], permissions: ["*"] }, true],
   "MO + IRO with subscriptions:write": [{ roles: ["IRO", "MO"], permissions: ["subscriptions:write", "subscriptions:read"] }, true],
+  "MO as a role object { code } (token shape)": [{ roles: [{ id: "r1", code: "MO", name: "Membership Officer" }], permissions: ["subscriptions:write"] }, true],
+  "REO as a role object with the claim": [{ roles: [{ id: "r2", code: "REO", name: "Regional Executive Officer" }], permissions: ["subscriptions:write"] }, false],
   "REO with subscriptions:write": [{ roles: ["REO"], permissions: ["subscriptions:read", "subscriptions:write", "transferRequests:write"] }, false],
   "MO without the claim": [{ roles: ["MO"], permissions: ["subscriptions:read"] }, false],
   "AM with subscriptions:write": [{ roles: ["AM"], permissions: ["subscriptions:write"] }, false],

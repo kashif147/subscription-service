@@ -46,7 +46,8 @@ function deny(res, code, message) {
 
 function canWriteSubscriptions(req) {
   const roles = requestRoles(req).map(normalizeRoleValue);
-  const permissions = requestPermissions(req);
+  // user-service lower-cases claims at token issue; compare case-insensitively, as the PDP does.
+  const permissions = requestPermissions(req).map((p) => String(p).toLowerCase());
   if (permissions.includes("*") || roles.some((r) => TENANT_ADMIN_ROLES.has(r))) return true;
   return roles.some((r) => SUBSCRIPTION_WRITER_ROLES.has(r)) && permissions.includes("subscriptions:write");
 }
