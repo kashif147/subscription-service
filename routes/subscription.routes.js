@@ -25,6 +25,7 @@ const {
   requireInternalOnly,
   authorizeProfileSubscriptionRead,
 } = require("../middlewares/profileSubscriptionAuthz.mw");
+const { requireSubscriptionWrite } = require("../middlewares/subscriptionWriteAuthz.mw");
 
 // Auth or internal (x-internal-request): current subscription only
 const getCurrentOnly = (req, res) => {
@@ -71,20 +72,24 @@ router.get(
   getSubscriptionYearsMeta,
 );
 
+// P6: every subscription mutation needs requireSubscriptionWrite (PDP subscriptions:write, then ASU or MO + the
+// claim; middlewares/subscriptionWriteAuthz.mw.js). REO stays read-only.
 // CRM-only: resign / undo-resign by subscription Mongo _id (must be before generic PUT /:subscriptionId)
 router.put(
   "/:subscriptionId/resign",
   ...ensureAuthenticatedWithTenantContext,
+  ...requireSubscriptionWrite,
   resignMembershipBySubscriptionId,
 );
 router.put(
   "/:subscriptionId/undo-resign",
   ...ensureAuthenticatedWithTenantContext,
+  ...requireSubscriptionWrite,
   undoResignMembershipBySubscriptionId,
 );
 
 // CRM-only: partial update by Mongo _id (category change → RabbitMQ for account-service GL)
-router.put("/:subscriptionId", ...ensureAuthenticatedWithTenantContext, updateSubscriptionById);
+router.put("/:subscriptionId", ...ensureAuthenticatedWithTenantContext, ...requireSubscriptionWrite, updateSubscriptionById);
 
 // CRM-only: enriched single subscription by Mongo _id (same shape as list `data` array items)
 router.get("/:subscriptionId", ...ensureAuthenticatedWithTenantContext, getSubscriptionById);
@@ -92,14 +97,15 @@ router.get("/:subscriptionId", ...ensureAuthenticatedWithTenantContext, getSubsc
 // CRM-only endpoint: Get all subscriptions or filter by query (profileId, applicationId, isCurrent)
 router.get("/", ...ensureAuthenticatedWithTenantContext, getSubscriptions);
 
+// Legacy by-profile mutations (no CRM caller found 2026-11-09; retirement tracked separately) - same P6 guard.
 // CRM-only endpoint: Resign membership for a profile (immediate portal demotion)
-router.put("/resign/:profileId", ...ensureAuthenticatedWithTenantContext, resignMembership);
+router.put("/resign/:profileId", ...ensureAuthenticatedWithTenantContext, ...requireSubscriptionWrite, resignMembership);
 
 // CRM-only: cancel (no grace period); portal Member→Non-Member via separate job
-router.put("/cancel/:profileId", ...ensureAuthenticatedWithTenantContext, cancelMembership);
+router.put("/cancel/:profileId", ...ensureAuthenticatedWithTenantContext, ...requireSubscriptionWrite, cancelMembership);
 
 // CRM-only endpoint: Undo resignation for a profile
-router.put("/undo-resign/:profileId", ...ensureAuthenticatedWithTenantContext, undoResignMembership);
-router.put("/undo-cancel/:profileId", ...ensureAuthenticatedWithTenantContext, undoCancelMembership);
+router.put("/undo-resign/:profileId", ...ensureAuthenticatedWithTenantContext, ...requireSubscriptionWrite, undoResignMembership);
+router.put("/undo-cancel/:profileId", ...ensureAuthenticatedWithTenantContext, ...requireSubscriptionWrite, undoCancelMembership);
 
 module.exports = router;
